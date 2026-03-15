@@ -1,0 +1,44 @@
+[package]
+name = "distil"
+version = "0.1.0"
+edition = "2024"
+description = "Context optimization middleware for LLM agents — dynamic tool registry, result masking, token budgeting, and smart compaction"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/munhq/distil"
+keywords = ["llm", "context", "tokens", "agents", "optimization"]
+categories = ["text-processing", "algorithms"]
+rust-version = "1.85"
+
+[features]
+default = []
+# Enable accurate BPE tokenization via tiktoken (cl100k_base for GPT-4/Claude,
+# model-specific for others). Without this feature, EstimateCounter is used.
+tiktoken = ["dep:tiktoken-rs"]
+# Enable the HTTP proxy binary (distil-proxy). Adds axum + reqwest.
+proxy = ["dep:axum", "dep:tokio", "dep:reqwest", "dep:tower-http", "dep:tracing", "dep:tracing-subscriber"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+regex = "1"
+
+# tiktoken feature
+tiktoken-rs = { version = "0.6", optional = true }
+
+# proxy feature
+axum = { version = "0.8", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+reqwest = { version = "0.12", features = ["json"], optional = true }
+tower-http = { version = "0.6", features = ["trace", "cors"], optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+[[bin]]
+name = "distil-proxy"
+path = "src/bin/proxy.rs"
+required-features = ["proxy"]
+
+[dev-dependencies]
+pretty_assertions = "1"
+tokio = { version = "1", features = ["full"] }
