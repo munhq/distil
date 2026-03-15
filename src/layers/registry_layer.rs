@@ -1,0 +1,99 @@
+use crate::counter::TokenCounter;
+use crate::pipeline::{Ctx, Layer, LayerResult};
+use crate::registry::ToolRegistry;
+use crate::types::ToolSpec;
+
+/// Replaces full tool schemas with a compact catalog + `tool_search` meta-tool.
+///
+/// Instead of injecting all tool schemas (~10K+ tokens for 40+ tools), this layer:
+/// 1. Removes all tools from `ctx.tools`
+/// 2. Adds only the `tool_search` meta-tool
+/// 3. Sets `ctx.catalog` to a compact listing (name + one-line per tool)
+///
+/// When the LLM needs a tool, it calls `tool_search("query")` and gets full schemas
+/// for matching tools. Pass `tool_search` calls to [`handle_tool_call`].
+///
+/// Typical savings: **85-95%** on tool definition tokens.
+pub struct RegistryLayer {
+    registry: ToolRegistry,
+}
+
+impl RegistryLayer {
+    pub fn new(tools: Vec<ToolSpec>, counter: &dyn TokenCounter) -> Self {
+        Self {
+            registry: ToolRegistry::new(tools, counter),
+        }
+    }
+
+    /// Search tools by keyword. Used internally by `handle_tool_call`.
+    pub fn search(&self, query: &str, max_results: usize) -> Vec<&ToolSpec> {
+        self.registry.search(query, max_results)
+    }
+
+    /// Get a tool by exact name.
+    pub fn get(&self, name: &str) -> Option<&ToolSpec> {
+        self.registry.get(name)
+    }
+
+    /// Access the underlying registry.
+    pub fn registry(&self) -> &ToolRegistry {
+        &self.registry
+    }
+}
+
+impl Layer for RegistryLayer {
+    fn name(&self) -> &str {
+        "registry"
+    }
+
+    fn apply(&self, ctx: &mut Ctx, counter: &dyn TokenCounter) -> LayerResult {
+        let tokens_before = ctx.total_tokens(counter);
+
+        let (catalog_tokens, full_tokens) = self.registry.token_savings();
+        let tool_count = self.registry.len();
+
+        // Replace tools with just the search meta-tool
+        ctx.tools = vec![self.registry.search_tool_spec()];
+        ctx.catalog = Some(self.registry.catalog().to_string());
+
+        let tokens_after = ctx.total_tokens(counter);
+
+        LayerResult {
+            layer: self.name().into(),
+            tokens_before,
+            tokens_after,
+            detail: format!(
+                "{tool_count} tools: {full_tokens} → {catalog_tokens} catalog tokens"
+            ),
+        }
+    }
+
+    fn handle_tool_call(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> Option<String> {
+        if tool_name != "tool_search" {
+            return None;
+        }
+
+        let query = args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let results = self.registry.search(query, 5);
+
+        if results.is_empty() {
+            return Some(format!("No tools found matching \"{query}\". Try different keywords."));
+        }
+
+        let mut output = format!("Found {} matching tool(s):\n\n", results.len());
+        for tool in &results {
+            output.push_str(&tool.to_prompt_text());
+            output.push_str("\n\n");
+        }
+
+        Some(output)
+    }
+}
