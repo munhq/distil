@@ -14,6 +14,15 @@ pub enum Error {
 
     #[error("summarization failed: {0}")]
     Summarization(String),
+
+    #[error("tool execution failed: {0}")]
+    ToolExecution(String),
+
+    #[error("configuration error: {0}")]
+    Config(String),
+
+    #[error("probe evaluation failed: {0}")]
+    ProbeEvaluation(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

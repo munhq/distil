@@ -8,6 +8,12 @@ pub trait TokenCounter: Send + Sync {
     fn count(&self, text: &str) -> usize;
 }
 
+impl TokenCounter for Box<dyn TokenCounter> {
+    fn count(&self, text: &str) -> usize {
+        (**self).count(text)
+    }
+}
+
 /// Returns the best available counter for a given model name.
 ///
 /// With the `tiktoken` feature enabled, this returns a [`TiktokenCounter`]

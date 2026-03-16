@@ -41,11 +41,16 @@
 //! ```
 
 pub mod budget;
+#[cfg(feature = "config")]
+pub mod config;
 pub mod counter;
 pub mod error;
 pub mod layers;
 pub mod masker;
+#[cfg(feature = "metrics")]
+pub mod metrics;
 pub mod pipeline;
+pub mod probe;
 pub mod registry;
 pub mod summarizer;
 pub mod types;
@@ -57,6 +62,13 @@ pub use counter::TiktokenCounter;
 pub use error::Error;
 pub use layers::*;
 pub use masker::JsonTruncateConfig;
-pub use pipeline::{Ctx, Layer, LayerResult, Pipeline, PipelineResult};
+pub use pipeline::{Ctx, Layer, LayerResult, OptimizationState, Phase, Pipeline, PipelineResult, ToolExecutor};
+pub use probe::{Probe, ProbeEvaluator, ProbeReport, ProbeResult, ProbeType};
 pub use summarizer::Summarizer;
+#[cfg(feature = "proxy")]
+pub use summarizer::{HttpSummarizer, OllamaSummarizer};
 pub use types::{Message, ToolSpec};
+#[cfg(feature = "config")]
+pub use config::PipelineConfig;
+#[cfg(feature = "metrics")]
+pub use metrics::DistilMetrics;

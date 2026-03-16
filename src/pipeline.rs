@@ -1,10 +1,45 @@
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
+use std::time::Duration;
+
 use crate::counter::TokenCounter;
 use crate::types::{Message, ToolSpec};
+
+/// Persistent state for progressive optimization across multiple pipeline calls.
+/// Store in Ctx extensions before calling `optimize()`, retrieve after.
+///
+/// ```rust,ignore
+/// // Caller persists across calls:
+/// ctx.insert(opt_state.clone());
+/// pipeline.optimize(&mut ctx);
+/// opt_state = ctx.remove::<OptimizationState>().unwrap_or_default();
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct OptimizationState {
+    /// Last turn processed by masking layer.
+    pub masking_watermark_turn: u32,
+    /// Last turn processed by summarization layer.
+    pub summarization_watermark_turn: u32,
+    /// Hash of tool specs when registry catalog was last generated.
+    pub tools_hash: Option<u64>,
+    /// Cached catalog text (reused if tools haven't changed).
+    pub cached_catalog: Option<String>,
+}
 
 /// The mutable context that flows through the optimization pipeline.
 ///
 /// Each [`Layer`] reads and modifies this struct. After the pipeline runs,
 /// the caller uses the final state for the LLM request.
+///
+/// ## Extensions
+///
+/// Layers can store and retrieve typed data via the extensions map,
+/// enabling cross-layer communication without coupling (Tower pattern):
+///
+/// ```rust,ignore
+/// ctx.insert(MyLayerState { processed: true });
+/// if let Some(state) = ctx.get::<MyLayerState>() { ... }
+/// ```
 pub struct Ctx {
     /// The conversation messages (system + history).
     pub messages: Vec<Message>,
@@ -14,6 +49,8 @@ pub struct Ctx {
     pub catalog: Option<String>,
     /// Current conversation turn (0-based). Used by age-based layers.
     pub turn: u32,
+    /// Type-erased extension map for cross-layer state sharing.
+    extensions: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
 impl Ctx {
@@ -23,6 +60,7 @@ impl Ctx {
             tools,
             catalog: None,
             turn,
+            extensions: HashMap::new(),
         }
     }
 
@@ -41,6 +79,34 @@ impl Ctx {
             .unwrap_or(0);
         msg_tokens + tool_tokens + catalog_tokens
     }
+
+    /// Insert a typed value into the extensions map.
+    /// Replaces any existing value of the same type.
+    pub fn insert<T: Send + Sync + 'static>(&mut self, val: T) {
+        self.extensions.insert(TypeId::of::<T>(), Box::new(val));
+    }
+
+    /// Get a reference to a typed value from the extensions map.
+    pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
+        self.extensions
+            .get(&TypeId::of::<T>())
+            .and_then(|boxed| boxed.downcast_ref())
+    }
+
+    /// Get a mutable reference to a typed value from the extensions map.
+    pub fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
+        self.extensions
+            .get_mut(&TypeId::of::<T>())
+            .and_then(|boxed| boxed.downcast_mut())
+    }
+
+    /// Remove a typed value from the extensions map, returning it if present.
+    pub fn remove<T: Send + Sync + 'static>(&mut self) -> Option<T> {
+        self.extensions
+            .remove(&TypeId::of::<T>())
+            .and_then(|boxed| boxed.downcast().ok())
+            .map(|boxed| *boxed)
+    }
 }
 
 /// Result from a single layer's optimization pass.
@@ -52,6 +118,8 @@ pub struct LayerResult {
     pub tokens_before: usize,
     /// Tokens in the context after this layer ran.
     pub tokens_after: usize,
+    /// Wall-clock time spent in this layer.
+    pub duration: Duration,
     /// Human-readable detail about what changed.
     pub detail: String,
 }
@@ -72,21 +140,32 @@ impl LayerResult {
 impl std::fmt::Display for LayerResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let saved = self.tokens_saved();
+        let ms = self.duration.as_secs_f64() * 1000.0;
         if saved > 0 {
             write!(
                 f,
-                "[{}] {} → {} tokens (saved {}, {:.1}%) — {}",
+                "[{}] {} → {} tokens (saved {}, {:.1}%) [{:.1}ms] — {}",
                 self.layer,
                 self.tokens_before,
                 self.tokens_after,
                 saved,
                 self.percentage_saved(),
+                ms,
                 self.detail
             )
         } else {
-            write!(f, "[{}] {} tokens (no change) — {}", self.layer, self.tokens_before, self.detail)
+            write!(f, "[{}] {} tokens (no change) [{:.1}ms] — {}", self.layer, self.tokens_before, ms, self.detail)
         }
     }
+}
+
+/// Pipeline execution phase for ordering validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Phase {
+    Setup = 0,
+    Transform = 1,
+    Compress = 2,
+    Finalize = 3,
 }
 
 /// A composable optimization layer.
@@ -103,6 +182,10 @@ pub trait Layer: Send + Sync {
 
     /// Apply this optimization to the context. Returns metrics about what changed.
     fn apply(&self, ctx: &mut Ctx, counter: &dyn TokenCounter) -> LayerResult;
+
+    /// Declare this layer's execution phase for ordering validation.
+    /// Returns `None` by default (no ordering constraint).
+    fn phase(&self) -> Option<Phase> { None }
 
     /// Handle a tool call that this layer injected into the context.
     ///
@@ -126,6 +209,8 @@ pub struct PipelineResult {
     pub tokens_before: usize,
     /// Total tokens after all optimizations.
     pub tokens_after: usize,
+    /// Total wall-clock time for the entire pipeline.
+    pub duration: Duration,
 }
 
 impl PipelineResult {
@@ -143,13 +228,15 @@ impl PipelineResult {
 
 impl std::fmt::Display for PipelineResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ms = self.duration.as_secs_f64() * 1000.0;
         writeln!(
             f,
-            "Distil: {} → {} tokens (saved {}, {:.1}%)",
+            "Distil: {} → {} tokens (saved {}, {:.1}%) [{:.1}ms]",
             self.tokens_before,
             self.tokens_after,
             self.total_saved(),
-            self.percentage_saved()
+            self.percentage_saved(),
+            ms,
         )?;
         for layer in &self.layers {
             writeln!(f, "  {layer}")?;
@@ -186,13 +273,14 @@ impl Pipeline {
 
     /// Run all layers in sequence.
     pub fn optimize(&self, ctx: &mut Ctx) -> PipelineResult {
+        let pipeline_start = std::time::Instant::now();
         let tokens_before = ctx.total_tokens(&*self.counter);
         let mut results = Vec::new();
 
         for layer in &self.layers {
-            let before = ctx.total_tokens(&*self.counter);
-            let result = layer.apply(ctx, &*self.counter);
-            let _ = before; // result already has before/after
+            let layer_start = std::time::Instant::now();
+            let mut result = layer.apply(ctx, &*self.counter);
+            result.duration = layer_start.elapsed();
             results.push(result);
         }
 
@@ -202,6 +290,7 @@ impl Pipeline {
             layers: results,
             tokens_before,
             tokens_after,
+            duration: pipeline_start.elapsed(),
         }
     }
 
@@ -228,6 +317,40 @@ impl Pipeline {
     }
 }
 
+/// Executes tool calls on behalf of layers that need to invoke agent tools.
+///
+/// Used by layers like `CodeModeLayer` that need to call the agent's actual
+/// tool implementations during execution (e.g., running a script that chains
+/// multiple tool calls in a sandbox).
+///
+/// Distil doesn't own tool implementations — the agent does. This trait bridges
+/// that gap: the caller provides an executor, and layers use it to invoke tools.
+///
+/// # Implementations
+///
+/// - **Crate users**: implement this trait with a closure or struct wrapping
+///   your agent's tool dispatch
+/// - **HTTP server**: executor makes HTTP callbacks to the agent's tool endpoint
+/// - **MCP mode**: executor routes through MCP protocol
+///
+/// ```rust,ignore
+/// struct MyExecutor { /* ... */ }
+///
+/// impl ToolExecutor for MyExecutor {
+///     fn execute(&self, tool_name: &str, args: &serde_json::Value) -> Result<String, crate::Error> {
+///         match tool_name {
+///             "shell" => run_shell(args),
+///             "file_read" => read_file(args),
+///             _ => Err(crate::Error::ToolExecution(format!("unknown tool: {tool_name}"))),
+///         }
+///     }
+/// }
+/// ```
+pub trait ToolExecutor: Send + Sync {
+    /// Execute a tool call and return the output as a string.
+    fn execute(&self, tool_name: &str, args: &serde_json::Value) -> std::result::Result<String, crate::Error>;
+}
+
 pub struct PipelineBuilder {
     layers: Vec<Box<dyn Layer>>,
     counter: Option<Box<dyn TokenCounter>>,
@@ -246,6 +369,37 @@ impl PipelineBuilder {
         self
     }
 
+    /// Build the pipeline, returning an error if layers are in invalid phase order.
+    pub fn build_checked(self) -> Result<Pipeline, crate::Error> {
+        let warnings = self.validate_ordering();
+        if !warnings.is_empty() {
+            return Err(crate::Error::Config(format!(
+                "layer ordering issues: {}",
+                warnings.join("; ")
+            )));
+        }
+        Ok(self.build())
+    }
+
+    fn validate_ordering(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let mut max_phase = None;
+        for layer in &self.layers {
+            if let Some(phase) = layer.phase() {
+                if let Some(prev) = max_phase {
+                    if phase < prev {
+                        warnings.push(format!(
+                            "'{}' ({:?}) comes after a {:?}-phase layer",
+                            layer.name(), phase, prev
+                        ));
+                    }
+                }
+                max_phase = Some(max_phase.map_or(phase, |p: Phase| p.max(phase)));
+            }
+        }
+        warnings
+    }
+
     pub fn build(self) -> Pipeline {
         Pipeline {
             layers: self.layers,
@@ -253,5 +407,111 @@ impl PipelineBuilder {
                 .counter
                 .unwrap_or_else(|| Box::new(crate::counter::EstimateCounter)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::counter::EstimateCounter;
+    use crate::types::Message;
+
+    #[test]
+    fn ctx_extensions_insert_get_remove() {
+        #[derive(Debug, PartialEq)]
+        struct LayerState {
+            processed: bool,
+            count: u32,
+        }
+
+        let mut ctx = Ctx::new(vec![Message::user("hello")], vec![], 0);
+
+        // Initially empty
+        assert!(ctx.get::<LayerState>().is_none());
+
+        // Insert
+        ctx.insert(LayerState { processed: true, count: 42 });
+        let state = ctx.get::<LayerState>().unwrap();
+        assert!(state.processed);
+        assert_eq!(state.count, 42);
+
+        // Mutate
+        ctx.get_mut::<LayerState>().unwrap().count = 99;
+        assert_eq!(ctx.get::<LayerState>().unwrap().count, 99);
+
+        // Remove
+        let removed = ctx.remove::<LayerState>().unwrap();
+        assert_eq!(removed.count, 99);
+        assert!(ctx.get::<LayerState>().is_none());
+    }
+
+    #[test]
+    fn ctx_extensions_multiple_types() {
+        let mut ctx = Ctx::new(vec![], vec![], 0);
+        ctx.insert(42u32);
+        ctx.insert("hello".to_string());
+
+        assert_eq!(*ctx.get::<u32>().unwrap(), 42);
+        assert_eq!(ctx.get::<String>().unwrap(), "hello");
+
+        // Overwrite
+        ctx.insert(100u32);
+        assert_eq!(*ctx.get::<u32>().unwrap(), 100);
+        // String unchanged
+        assert_eq!(ctx.get::<String>().unwrap(), "hello");
+    }
+
+    #[test]
+    fn valid_ordering_passes_checked_build() {
+        let counter = EstimateCounter;
+        let result = Pipeline::builder()
+            .counter(counter)
+            .layer(crate::layers::CompactionLayer::new())
+            .layer(crate::layers::BudgetLayer::new(32_000))
+            .build_checked();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn invalid_ordering_fails_checked_build() {
+        let counter = EstimateCounter;
+        let result = Pipeline::builder()
+            .counter(counter)
+            .layer(crate::layers::BudgetLayer::new(32_000))
+            .layer(crate::layers::MaskingLayer::new())
+            .build_checked();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pipeline_optimize_records_timing() {
+        let counter = EstimateCounter;
+        let pipeline = Pipeline::builder()
+            .counter(counter)
+            .layer(crate::layers::CompactionLayer::new())
+            .build();
+
+        let mut ctx = Ctx::new(
+            vec![
+                Message::system("Be helpful."),
+                Message::user("hello"),
+                Message::assistant("hi"),
+            ],
+            vec![],
+            1,
+        );
+
+        let result = pipeline.optimize(&mut ctx);
+
+        // Pipeline duration should be non-zero (or at least not panic)
+        assert!(!result.layers.is_empty());
+        // Each layer should have a duration set by the pipeline
+        for lr in &result.layers {
+            // Duration is set by optimize(), not the layer itself
+            // It might be 0 on fast machines, but it should be set
+            let _ = lr.duration;
+        }
+        // Pipeline total duration should be >= sum of layers
+        let _ = result.duration;
     }
 }

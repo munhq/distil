@@ -1,7 +1,29 @@
+use std::time::Duration;
+
 use crate::counter::TokenCounter;
 use crate::pipeline::{Ctx, Layer, LayerResult};
 use crate::summarizer::Summarizer;
 use crate::types::{Message, Role};
+
+/// Tracks last turn when summarization was performed.
+#[derive(Debug, Clone, Default)]
+pub struct SummarizationState {
+    pub last_summarized_turn: u32,
+}
+
+/// Emitted when async_mode is true and summarization is needed but not performed.
+/// The caller should handle the async LLM call and insert [`CompletedSummary`] on
+/// the next call.
+#[derive(Debug, Clone)]
+pub struct PendingSummarization {
+    pub content: String,
+    pub max_tokens: usize,
+}
+
+/// Insert this into Ctx extensions before calling `optimize()` if a background
+/// summarization has completed since the last call.
+#[derive(Debug, Clone)]
+pub struct CompletedSummary(pub String);
 
 /// Semantically compresses old conversation turns using a caller-provided LLM.
 ///
@@ -34,6 +56,12 @@ pub struct SummarizationLayer<S: Summarizer> {
     max_summary_tokens: usize,
     /// Don't bother summarizing if old content is below this (default: 100).
     min_content_tokens: usize,
+    /// Only summarize if at least this many turns have passed since last summarization.
+    /// Default: 1 (every call). Set to e.g. 3 to only summarize every 3 turns.
+    summarize_interval: u32,
+    /// When true, never blocks for summarization. Instead emits PendingSummarization
+    /// in extensions for the caller to handle asynchronously. Default: false.
+    async_mode: bool,
 }
 
 impl<S: Summarizer> SummarizationLayer<S> {
@@ -43,6 +71,8 @@ impl<S: Summarizer> SummarizationLayer<S> {
             age_threshold: 4,
             max_summary_tokens: 200,
             min_content_tokens: 100,
+            summarize_interval: 1,
+            async_mode: false,
         }
     }
 
@@ -63,6 +93,20 @@ impl<S: Summarizer> SummarizationLayer<S> {
         self.min_content_tokens = tokens;
         self
     }
+
+    /// Set the summarize interval: only summarize if at least this many turns have
+    /// passed since the last summarization (default: 1, meaning every call).
+    pub fn summarize_interval(mut self, interval: u32) -> Self {
+        self.summarize_interval = interval.max(1);
+        self
+    }
+
+    /// Enable or disable async mode. When true, never blocks for summarization.
+    /// Instead emits [`PendingSummarization`] in extensions for the caller to handle.
+    pub fn async_mode(mut self, enabled: bool) -> Self {
+        self.async_mode = enabled;
+        self
+    }
 }
 
 impl<S: Summarizer + 'static> Layer for SummarizationLayer<S> {
@@ -70,8 +114,44 @@ impl<S: Summarizer + 'static> Layer for SummarizationLayer<S> {
         "summarization"
     }
 
+    fn phase(&self) -> Option<crate::pipeline::Phase> {
+        Some(crate::pipeline::Phase::Transform)
+    }
+
     fn apply(&self, ctx: &mut Ctx, counter: &dyn TokenCounter) -> LayerResult {
         let tokens_before = ctx.total_tokens(counter);
+
+        // Check for completed async summary from a previous call
+        if let Some(completed) = ctx.remove::<CompletedSummary>() {
+            // Insert summary after system messages
+            let insert_pos = ctx
+                .messages
+                .iter()
+                .position(|m| m.role != Role::System)
+                .unwrap_or(ctx.messages.len());
+            ctx.messages.insert(
+                insert_pos,
+                Message::system(format!("## Conversation Summary\n{}", completed.0)),
+            );
+            // Continue with normal processing — the summary will help the LLM but old messages
+            // will still get processed by the regular summarization logic below
+        }
+
+        // Check interval — skip if not enough turns since last summarization
+        let state = ctx.get::<SummarizationState>().cloned().unwrap_or_default();
+        if ctx.turn.saturating_sub(state.last_summarized_turn) < self.summarize_interval {
+            return LayerResult {
+                layer: self.name().into(),
+                tokens_before,
+                tokens_after: tokens_before,
+                duration: Duration::ZERO,
+                detail: format!(
+                    "skipped (turn {}, last summarized at {}, interval {})",
+                    ctx.turn, state.last_summarized_turn, self.summarize_interval
+                ),
+            };
+        }
+
         let cutoff = ctx.turn.saturating_sub(self.age_threshold);
 
         // If cutoff is 0, nothing is old enough to summarize
@@ -80,6 +160,7 @@ impl<S: Summarizer + 'static> Layer for SummarizationLayer<S> {
                 layer: self.name().into(),
                 tokens_before,
                 tokens_after: tokens_before,
+                duration: Duration::ZERO,
                 detail: "no turns old enough to summarize".into(),
             };
         }
@@ -119,6 +200,7 @@ impl<S: Summarizer + 'static> Layer for SummarizationLayer<S> {
                 layer: self.name().into(),
                 tokens_before,
                 tokens_after: tokens_before,
+                duration: Duration::ZERO,
                 detail: "no old messages to summarize".into(),
             };
         }
@@ -129,9 +211,28 @@ impl<S: Summarizer + 'static> Layer for SummarizationLayer<S> {
                 layer: self.name().into(),
                 tokens_before,
                 tokens_after: tokens_before,
+                duration: Duration::ZERO,
                 detail: format!(
                     "old content too small ({old_tokens} < {} tokens), skipped",
                     self.min_content_tokens
+                ),
+            };
+        }
+
+        // If async mode, emit pending and don't block
+        if self.async_mode {
+            ctx.insert(PendingSummarization {
+                content: old_content,
+                max_tokens: self.max_summary_tokens,
+            });
+            return LayerResult {
+                layer: self.name().into(),
+                tokens_before,
+                tokens_after: tokens_before,
+                duration: Duration::ZERO,
+                detail: format!(
+                    "async: pending summarization of {} old messages ({old_tokens} tokens)",
+                    old_indices.len()
                 ),
             };
         }
@@ -144,6 +245,7 @@ impl<S: Summarizer + 'static> Layer for SummarizationLayer<S> {
                     layer: self.name().into(),
                     tokens_before,
                     tokens_after: tokens_before,
+                    duration: Duration::ZERO,
                     detail: format!("summarization failed: {e}, context unchanged"),
                 };
             }
@@ -166,12 +268,16 @@ impl<S: Summarizer + 'static> Layer for SummarizationLayer<S> {
             Message::system(format!("## Conversation Summary\n{summary}")),
         );
 
+        // Update summarization state
+        ctx.insert(SummarizationState { last_summarized_turn: ctx.turn });
+
         let tokens_after = ctx.total_tokens(counter);
 
         LayerResult {
             layer: self.name().into(),
             tokens_before,
             tokens_after,
+            duration: Duration::ZERO,
             detail: format!(
                 "summarized {} old messages ({old_tokens} → {} tokens)",
                 old_indices.len(),
@@ -271,6 +377,10 @@ mod tests {
             .iter()
             .any(|m| m.content.contains("Build the auth module"));
         assert!(!has_auth_module, "old messages should be removed");
+
+        // SummarizationState should be updated
+        let state = ctx.get::<SummarizationState>().expect("state should be set after summarization");
+        assert_eq!(state.last_summarized_turn, 3);
     }
 
     #[test]
@@ -372,5 +482,109 @@ mod tests {
         assert_eq!(summary_msgs[0].role, Role::System);
 
         let _ = result;
+    }
+
+    #[test]
+    fn respects_summarize_interval() {
+        let counter = EstimateCounter;
+        let layer = SummarizationLayer::new(MockSummarizer::ok("summary"))
+            .age_threshold(1)
+            .min_content_tokens(5)
+            .summarize_interval(3);
+
+        // Turn 1 with interval=3 and default state (last_summarized_turn=0): 1-0=1 < 3, so it skips
+        let mut ctx = Ctx::new(
+            vec![
+                Message::system("System"),
+                Message::user("Build auth"),
+                Message::assistant("Done. ".repeat(50)),
+                Message::user("Next?"),
+            ],
+            vec![],
+            1,
+        );
+        let result = layer.apply(&mut ctx, &counter);
+        assert!(result.detail.contains("skipped"), "should skip at turn 1: {}", result.detail);
+
+        // Turn 3 — should summarize (3-0=3 >= 3)
+        let mut ctx2 = Ctx::new(
+            vec![
+                Message::system("System"),
+                Message::user("Build auth"),
+                Message::assistant("Done. ".repeat(50)),
+                Message::user("Tests"),
+                Message::assistant("Pass. ".repeat(50)),
+                Message::user("Deploy"),
+                Message::assistant("Deployed. ".repeat(50)),
+                Message::user("Next?"),
+            ],
+            vec![],
+            3,
+        );
+        let result2 = layer.apply(&mut ctx2, &counter);
+        assert!(result2.tokens_saved() > 0, "should summarize at turn 3: {}", result2.detail);
+
+        // Turn 4 with state showing last summarized at 3 — should skip (4-3=1 < 3)
+        let mut ctx3 = Ctx::new(
+            vec![
+                Message::system("System"),
+                Message::user("More work"),
+                Message::assistant("Done. ".repeat(50)),
+                Message::user("Next?"),
+            ],
+            vec![],
+            4,
+        );
+        ctx3.insert(SummarizationState { last_summarized_turn: 3 });
+        let result3 = layer.apply(&mut ctx3, &counter);
+        assert!(result3.detail.contains("skipped"), "should skip at turn 4: {}", result3.detail);
+    }
+
+    #[test]
+    fn async_mode_emits_pending() {
+        let counter = EstimateCounter;
+        let layer = SummarizationLayer::new(MockSummarizer::ok("should not be called"))
+            .age_threshold(1)
+            .min_content_tokens(5)
+            .async_mode(true);
+
+        let mut ctx = Ctx::new(
+            vec![
+                Message::system("System"),
+                Message::user("Build auth"),
+                Message::assistant("Done. ".repeat(50)),
+                Message::user("Next?"),
+            ],
+            vec![],
+            2,
+        );
+
+        let result = layer.apply(&mut ctx, &counter);
+        assert!(result.detail.contains("async"), "should be async: {}", result.detail);
+        assert!(ctx.get::<PendingSummarization>().is_some(), "should have pending");
+    }
+
+    #[test]
+    fn completed_summary_injected() {
+        let counter = EstimateCounter;
+        let layer = SummarizationLayer::new(MockSummarizer::ok("unused"))
+            .age_threshold(1)
+            .min_content_tokens(5);
+
+        let mut ctx = Ctx::new(
+            vec![
+                Message::system("System"),
+                Message::user("Build auth"),
+                Message::assistant("Done. ".repeat(50)),
+                Message::user("Next?"),
+            ],
+            vec![],
+            2,
+        );
+        ctx.insert(CompletedSummary("Auth module was built. Tests pass.".into()));
+
+        let _result = layer.apply(&mut ctx, &counter);
+        let has_summary = ctx.messages.iter().any(|m| m.content.contains("Auth module was built"));
+        assert!(has_summary, "should have injected completed summary");
     }
 }

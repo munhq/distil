@@ -50,7 +50,6 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 // ── CLI args ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
-#[allow(dead_code)] // summarizer fields reserved for HttpSummarizer integration
 struct Config {
     upstream: Option<String>,
     port: u16,
@@ -59,9 +58,18 @@ struct Config {
     summarizer_endpoint: Option<String>,
     summarizer_model: Option<String>,
     summarizer_api_key: Option<String>,
+    /// Path to distil.toml for declarative pipeline configuration.
+    pipeline_config: Option<distil::PipelineConfig>,
 }
 
 impl Config {
+    fn build_summarizer(&self) -> Option<distil::HttpSummarizer> {
+        let endpoint = self.summarizer_endpoint.as_ref()?;
+        let model = self.summarizer_model.as_ref()?;
+        let api_key = self.summarizer_api_key.as_ref()?;
+        Some(distil::HttpSummarizer::new(endpoint, model, api_key))
+    }
+
     fn from_env_and_args() -> Self {
         let args: Vec<String> = std::env::args().collect();
         let get_flag = |flag: &str| -> Option<String> {
@@ -73,6 +81,21 @@ impl Config {
         let upstream = std::env::var("DISTIL_UPSTREAM")
             .or_else(|_| get_flag("--upstream").ok_or(()))
             .ok();
+
+        // Try loading a TOML pipeline config
+        let config_path = std::env::var("DISTIL_CONFIG")
+            .or_else(|_| get_flag("--config").ok_or(()))
+            .ok();
+
+        let pipeline_config = config_path.and_then(|path| {
+            match distil::PipelineConfig::from_file(&path) {
+                Ok(cfg) => Some(cfg),
+                Err(e) => {
+                    eprintln!("warning: failed to load config from {path}: {e}");
+                    None
+                }
+            }
+        });
 
         Self {
             upstream,
@@ -92,6 +115,7 @@ impl Config {
             summarizer_endpoint: std::env::var("DISTIL_SUMMARIZER_ENDPOINT").ok(),
             summarizer_model: std::env::var("DISTIL_SUMMARIZER_MODEL").ok(),
             summarizer_api_key: std::env::var("DISTIL_SUMMARIZER_API_KEY").ok(),
+            pipeline_config,
         }
     }
 }
@@ -102,6 +126,8 @@ struct ProxyState {
     config: Config,
     client: Client,
     scratchpad: distil::ScratchpadLayer,
+    #[cfg(feature = "metrics")]
+    metrics: distil::DistilMetrics,
 }
 
 // ── OpenAI wire types (subset we care about) ──────────────────────────────────
@@ -181,6 +207,7 @@ struct OptimizeMetrics {
     tokens_after: usize,
     tokens_saved: usize,
     percentage_saved: f64,
+    duration_ms: f64,
     layers: Vec<LayerMetric>,
 }
 
@@ -190,6 +217,7 @@ struct LayerMetric {
     tokens_before: usize,
     tokens_after: usize,
     tokens_saved: usize,
+    duration_ms: f64,
     detail: String,
 }
 
@@ -309,6 +337,7 @@ fn build_pipeline_from_config(
     tools: &[OaiTool],
     config: &OptimizeConfig,
     default_budget: usize,
+    summarizer: Option<distil::HttpSummarizer>,
 ) -> distil::Pipeline {
     let counter = distil::EstimateCounter;
     let tool_specs = oai_tools_to_specs(tools);
@@ -334,6 +363,10 @@ fn build_pipeline_from_config(
     }
     builder = builder.layer(masking);
 
+    if let Some(s) = summarizer {
+        builder = builder.layer(distil::SummarizationLayer::new(s));
+    }
+
     builder = builder.layer(distil::CompactionLayer::new());
 
     let budget = config.budget.unwrap_or(default_budget);
@@ -346,7 +379,11 @@ fn build_pipeline_from_config(
     builder.build()
 }
 
-fn build_default_pipeline(tools: &[OaiTool], budget: usize) -> distil::Pipeline {
+fn build_default_pipeline(
+    tools: &[OaiTool],
+    budget: usize,
+    summarizer: Option<distil::HttpSummarizer>,
+) -> distil::Pipeline {
     let counter = distil::EstimateCounter;
     let tool_specs = oai_tools_to_specs(tools);
 
@@ -357,7 +394,13 @@ fn build_default_pipeline(tools: &[OaiTool], budget: usize) -> distil::Pipeline 
     }
 
     builder = builder
-        .layer(distil::MaskingLayer::new().retain_turns(3))
+        .layer(distil::MaskingLayer::new().retain_turns(3));
+
+    if let Some(s) = summarizer {
+        builder = builder.layer(distil::SummarizationLayer::new(s));
+    }
+
+    builder = builder
         .layer(distil::CompactionLayer::new())
         .layer(distil::BudgetLayer::new(budget));
 
@@ -370,6 +413,7 @@ fn pipeline_result_to_metrics(result: &distil::PipelineResult) -> OptimizeMetric
         tokens_after: result.tokens_after,
         tokens_saved: result.total_saved(),
         percentage_saved: result.percentage_saved(),
+        duration_ms: result.duration.as_secs_f64() * 1000.0,
         layers: result
             .layers
             .iter()
@@ -378,6 +422,7 @@ fn pipeline_result_to_metrics(result: &distil::PipelineResult) -> OptimizeMetric
                 tokens_before: lr.tokens_before,
                 tokens_after: lr.tokens_after,
                 tokens_saved: lr.tokens_saved(),
+                duration_ms: lr.duration.as_secs_f64() * 1000.0,
                 detail: lr.detail.clone(),
             })
             .collect(),
@@ -400,10 +445,13 @@ async fn optimize(
             .count() as u32
     });
 
-    let pipeline = if let Some(ref config) = body.config {
-        build_pipeline_from_config(&body.tools, config, state.config.budget)
+    let pipeline = if let Some(ref pipeline_config) = state.config.pipeline_config {
+        // TOML-configured pipeline takes precedence
+        pipeline_config.build_pipeline(&oai_tools_to_specs(&body.tools), state.config.build_summarizer(), None)
+    } else if let Some(ref config) = body.config {
+        build_pipeline_from_config(&body.tools, config, state.config.budget, state.config.build_summarizer())
     } else {
-        build_default_pipeline(&body.tools, state.config.budget)
+        build_default_pipeline(&body.tools, state.config.budget, state.config.build_summarizer())
     };
 
     let mut ctx = distil::Ctx::new(distil_messages, tool_specs, turn);
@@ -416,6 +464,9 @@ async fn optimize(
         "optimize: {:.1}% saved",
         result.percentage_saved()
     );
+
+    #[cfg(feature = "metrics")]
+    state.metrics.record(&result);
 
     let optimized_messages = to_oai_messages(ctx.messages, &body.messages);
     let optimized_tools = specs_to_oai_tools(&ctx.tools);
@@ -483,10 +534,15 @@ async fn chat_completions(
         .clone()
         .unwrap_or_else(|| state.config.model.clone());
 
-    let pipeline = build_default_pipeline(&body.tools, state.config.budget);
+    let tool_specs = oai_tools_to_specs(&body.tools);
+
+    let pipeline = if let Some(ref pipeline_config) = state.config.pipeline_config {
+        pipeline_config.build_pipeline(&tool_specs, state.config.build_summarizer(), None)
+    } else {
+        build_default_pipeline(&body.tools, state.config.budget, state.config.build_summarizer())
+    };
 
     let distil_messages = to_distil_messages(&body.messages);
-    let tool_specs = oai_tools_to_specs(&body.tools);
     let turn = body
         .messages
         .iter()
@@ -508,6 +564,9 @@ async fn chat_completions(
         "distil: {:.1}% saved",
         result.percentage_saved()
     );
+
+    #[cfg(feature = "metrics")]
+    state.metrics.record(&result);
 
     let optimized_messages = to_oai_messages(ctx.messages, &body.messages);
 
@@ -614,7 +673,23 @@ async fn health(State(state): State<Arc<ProxyState>>) -> Json<Value> {
         "mode": if state.config.upstream.is_some() { "proxy" } else { "direct" },
         "budget": state.config.budget,
         "summarizer": state.config.summarizer_endpoint.is_some(),
+        "metrics": cfg!(feature = "metrics"),
     }))
+}
+
+// ── GET /metrics — Prometheus metrics endpoint ───────────────────────────────
+
+#[cfg(feature = "metrics")]
+async fn prometheus_metrics(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
+    let body = state.metrics.render();
+    (
+        StatusCode::OK,
+        [(
+            HeaderName::from_static("content-type"),
+            HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+        )],
+        body,
+    )
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -651,9 +726,11 @@ async fn main() {
             .build()
             .expect("failed to build HTTP client"),
         scratchpad: distil::ScratchpadLayer::new(),
+        #[cfg(feature = "metrics")]
+        metrics: distil::DistilMetrics::new(),
     });
 
-    let app = Router::new()
+    let mut app = Router::new()
         // Direct API endpoints
         .route("/v1/optimize", post(optimize))
         .route("/v1/tool_call", post(tool_call))
@@ -661,7 +738,18 @@ async fn main() {
         .route("/health", get(health))
         // Proxy endpoints
         .route("/v1/chat/completions", post(chat_completions))
-        .route("/chat/completions", post(chat_completions))
+        .route("/chat/completions", post(chat_completions));
+
+    // Metrics endpoint (only when feature enabled)
+    #[cfg(feature = "metrics")]
+    {
+        app = app
+            .route("/metrics", get(prometheus_metrics))
+            .route("/v1/metrics", get(prometheus_metrics));
+        tracing::info!("prometheus metrics enabled at /metrics");
+    }
+
+    let app = app
         .with_state(state)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());

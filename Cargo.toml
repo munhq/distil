@@ -15,7 +15,15 @@ default = []
 # model-specific for others). Without this feature, EstimateCounter is used.
 tiktoken = ["dep:tiktoken-rs"]
 # Enable the HTTP proxy binary (distil-proxy). Adds axum + reqwest.
-proxy = ["dep:axum", "dep:tokio", "dep:reqwest", "dep:tower-http", "dep:tracing", "dep:tracing-subscriber"]
+proxy = ["dep:axum", "dep:tokio", "dep:reqwest", "dep:tower-http", "dep:tracing", "dep:tracing-subscriber", "config"]
+# Enable Prometheus metrics collection and /metrics endpoint.
+metrics = ["dep:prometheus"]
+# Enable TOML-based pipeline configuration.
+config = ["dep:toml"]
+# Enable Code Mode layer (JS sandbox for multi-tool chaining).
+code-mode = ["dep:rquickjs"]
+# Enable MCP (Model Context Protocol) server mode.
+mcp = ["dep:rmcp", "dep:tokio", "dep:schemars"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -26,10 +34,23 @@ regex = "1"
 # tiktoken feature
 tiktoken-rs = { version = "0.6", optional = true }
 
+# metrics feature
+prometheus = { version = "0.14", optional = true }
+
+# config feature (TOML pipeline configuration)
+toml = { version = "0.8", optional = true }
+
+# code-mode feature (JS sandbox for tool chaining)
+rquickjs = { version = "0.10", optional = true }
+
+# mcp feature (MCP server mode)
+rmcp = { version = "0.16", features = ["server", "transport-io", "macros"], optional = true }
+schemars = { version = "1", optional = true }
+
 # proxy feature
 axum = { version = "0.8", optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
-reqwest = { version = "0.12", features = ["json"], optional = true }
+reqwest = { version = "0.12", features = ["json", "blocking"], optional = true }
 tower-http = { version = "0.6", features = ["trace", "cors"], optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
@@ -38,6 +59,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 name = "distil-proxy"
 path = "src/bin/proxy.rs"
 required-features = ["proxy"]
+
+[[bin]]
+name = "distil-mcp"
+path = "src/bin/mcp_server.rs"
+required-features = ["mcp"]
 
 [dev-dependencies]
 pretty_assertions = "1"
