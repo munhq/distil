@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::counter::TokenCounter;
 use crate::budget::TokenBudget;
 use crate::pipeline::{Ctx, Layer, LayerResult};
@@ -34,6 +36,10 @@ impl Layer for BudgetLayer {
         "budget"
     }
 
+    fn phase(&self) -> Option<crate::pipeline::Phase> {
+        Some(crate::pipeline::Phase::Compress)
+    }
+
     fn apply(&self, ctx: &mut Ctx, counter: &dyn TokenCounter) -> LayerResult {
         let tokens_before = ctx.total_tokens(counter);
         let msg_count_before = ctx.messages.len();
@@ -50,6 +56,7 @@ impl Layer for BudgetLayer {
             layer: self.name().into(),
             tokens_before,
             tokens_after,
+            duration: Duration::ZERO,
             detail: format!(
                 "budget {}, removed {removed} messages",
                 self.budget.max_tokens()

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::counter::TokenCounter;
 use crate::pipeline::{Ctx, Layer, LayerResult};
 use crate::types::{Message, Role};
@@ -66,6 +68,10 @@ impl Layer for CompactionLayer {
         "compactor"
     }
 
+    fn phase(&self) -> Option<crate::pipeline::Phase> {
+        Some(crate::pipeline::Phase::Compress)
+    }
+
     fn apply(&self, ctx: &mut Ctx, counter: &dyn TokenCounter) -> LayerResult {
         let tokens_before = ctx.total_tokens(counter);
         let msg_count_before = ctx.messages.len();
@@ -99,6 +105,7 @@ impl Layer for CompactionLayer {
             layer: self.name().into(),
             tokens_before,
             tokens_after,
+            duration: Duration::ZERO,
             detail: format!(
                 "compacted {msg_count_before} → {} messages ({removed} removed)",
                 ctx.messages.len()

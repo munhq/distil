@@ -48,6 +48,16 @@ impl Message {
             content: content.into(),
         }
     }
+
+    /// Return the role as a static string slice.
+    pub fn role_str(&self) -> &'static str {
+        match self.role {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Tool => "tool",
+        }
+    }
 }
 
 /// A tool's full specification (name + description + JSON Schema parameters).

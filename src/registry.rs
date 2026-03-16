@@ -115,6 +115,11 @@ impl ToolRegistry {
         &self.summaries
     }
 
+    /// Access the registered tool specs.
+    pub fn tools(&self) -> &[ToolSpec] {
+        &self.tools
+    }
+
     /// Number of registered tools.
     pub fn len(&self) -> usize {
         self.tools.len()
@@ -122,6 +127,54 @@ impl ToolRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
+    }
+
+    /// Generate TypeScript-style function signatures for code mode.
+    pub fn to_typescript_defs(&self) -> String {
+        let mut out = String::from("// Available tool functions (call with JSON string arg, returns string):\n");
+        for tool in &self.tools {
+            out.push_str(&Self::ts_signature(tool));
+            out.push('\n');
+        }
+        out
+    }
+
+    fn ts_signature(tool: &ToolSpec) -> String {
+        let params = Self::json_schema_to_ts_params(&tool.parameters);
+        format!("function {}(args: {{{}}}): string;", tool.name, params)
+    }
+
+    fn json_schema_to_ts_params(schema: &serde_json::Value) -> String {
+        let props = match schema.get("properties").and_then(|p| p.as_object()) {
+            Some(p) => p,
+            None => return String::new(),
+        };
+        let required: Vec<&str> = schema
+            .get("required")
+            .and_then(|r| r.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+
+        props
+            .iter()
+            .map(|(name, prop)| {
+                let ts_type = Self::json_type_to_ts(prop);
+                let optional = if required.contains(&name.as_str()) { "" } else { "?" };
+                format!("{name}{optional}: {ts_type}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    fn json_type_to_ts(prop: &serde_json::Value) -> &'static str {
+        match prop.get("type").and_then(|t| t.as_str()) {
+            Some("string") => "string",
+            Some("integer") | Some("number") => "number",
+            Some("boolean") => "boolean",
+            Some("array") => "unknown[]",
+            Some("object") => "Record<string, unknown>",
+            _ => "unknown",
+        }
     }
 
     fn build_catalog(summaries: &[ToolSummary]) -> String {
@@ -132,6 +185,10 @@ impl ToolRegistry {
         out
     }
 }
+
+/// TypeScript type definitions for tools, for cross-layer use.
+#[derive(Debug, Clone)]
+pub struct ToolTypeScriptDefs(pub String);
 
 /// Score how relevant a tool is to the query terms.
 /// Higher = more relevant.
@@ -329,6 +386,40 @@ mod tests {
 
         assert!(registry.get("shell").is_some());
         assert!(registry.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn typescript_defs_basic() {
+        let tools = vec![
+            ToolSpec {
+                name: "shell".into(),
+                description: "Run a command".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"},
+                        "timeout": {"type": "integer"}
+                    },
+                    "required": ["command"]
+                }),
+            },
+        ];
+        let counter = EstimateCounter;
+        let registry = ToolRegistry::new(tools, &counter);
+        let ts = registry.to_typescript_defs();
+        assert!(ts.contains("function shell"), "should have function: {ts}");
+        assert!(ts.contains("command: string"), "should have required param: {ts}");
+        assert!(ts.contains("timeout?: number"), "should have optional param: {ts}");
+    }
+
+    #[test]
+    fn typescript_defs_multiple_tools() {
+        let counter = EstimateCounter;
+        let registry = ToolRegistry::new(sample_tools(), &counter);
+        let ts = registry.to_typescript_defs();
+        assert!(ts.contains("function shell"), "should have shell: {ts}");
+        assert!(ts.contains("function file_read"), "should have file_read: {ts}");
+        assert!(ts.contains("function git_status"), "should have git_status: {ts}");
     }
 
     #[test]

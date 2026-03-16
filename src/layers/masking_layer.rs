@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::counter::TokenCounter;
 use crate::masker::{JsonTruncateConfig, ResultMasker};
 use crate::pipeline::{Ctx, Layer, LayerResult};
@@ -80,6 +82,10 @@ impl Layer for MaskingLayer {
         "masking"
     }
 
+    fn phase(&self) -> Option<crate::pipeline::Phase> {
+        Some(crate::pipeline::Phase::Transform)
+    }
+
     fn apply(&self, ctx: &mut Ctx, counter: &dyn TokenCounter) -> LayerResult {
         let tokens_before = ctx.total_tokens(counter);
 
@@ -92,6 +98,7 @@ impl Layer for MaskingLayer {
             layer: self.name().into(),
             tokens_before,
             tokens_after,
+            duration: Duration::ZERO,
             detail: format!("masked old tool results, saved {tokens_saved} tokens"),
         }
     }

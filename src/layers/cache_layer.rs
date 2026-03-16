@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::counter::TokenCounter;
 use crate::pipeline::{Ctx, Layer, LayerResult};
 use crate::types::Role;
@@ -59,6 +61,10 @@ impl Layer for CacheAlignLayer {
         "cache_align"
     }
 
+    fn phase(&self) -> Option<crate::pipeline::Phase> {
+        Some(crate::pipeline::Phase::Finalize)
+    }
+
     fn apply(&self, ctx: &mut Ctx, counter: &dyn TokenCounter) -> LayerResult {
         let tokens_before = ctx.total_tokens(counter);
 
@@ -75,6 +81,7 @@ impl Layer for CacheAlignLayer {
                 layer: self.name().into(),
                 tokens_before,
                 tokens_after: tokens_before,
+                duration: Duration::ZERO,
                 detail: "no system messages to align".into(),
             };
         }
@@ -138,6 +145,7 @@ impl Layer for CacheAlignLayer {
             layer: self.name().into(),
             tokens_before,
             tokens_after,
+            duration: Duration::ZERO,
             detail: format!(
                 "merged {merged_count} system messages, {:?} ordering",
                 self.provider

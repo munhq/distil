@@ -536,3 +536,106 @@ fn compare_v1_vs_v2_tiktoken() {
 
     assert!(pct > 50.0, "V2 should save >50% with tiktoken, got {pct:.1}%");
 }
+
+// ── Real LLM summarizer test ─────────────────────────────────────────────────
+
+/// Tests the full pipeline with a REAL LLM call for summarization.
+///
+/// Uses NVIDIA NIM's OpenAI-compatible endpoint.
+/// Requires `proxy` feature and `NVIDIA_API_KEY` env var.
+///
+/// Run: NVIDIA_API_KEY=<key> cargo test --features proxy full_pipeline_real_llm -- --nocapture
+#[cfg(feature = "proxy")]
+#[test]
+fn full_pipeline_real_llm_summarizer() {
+    use distil::Summarizer;
+
+    // NVIDIA_API_KEY with NIM's OpenAI-compatible endpoint
+    let api_key = match std::env::var("NVIDIA_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => {
+            eprintln!("\n⚠ SKIPPED: full_pipeline_real_llm_summarizer");
+            eprintln!("  Set NVIDIA_API_KEY to run this test");
+            return;
+        }
+    };
+
+    let summarizer = distil::HttpSummarizer::new(
+        "https://integrate.api.nvidia.com/v1/chat/completions",
+        "meta/llama-3.3-70b-instruct",
+        &api_key,
+    );
+
+    let counter = EstimateCounter;
+    let tools = realistic_tools();
+    let messages = realistic_conversation_v2();
+    let baseline = baseline_tokens(&messages, &tools, &counter);
+
+    // Test the summarizer directly first
+    let test_content = "[user]: Build auth module\n[assistant]: Created auth.rs with JWT validation, middleware.rs with route protection. Added jsonwebtoken and argon2 deps.\n[user]: Run tests\n[assistant]: All 12 tests pass.\n";
+    let summary = summarizer
+        .summarize(test_content, 100)
+        .expect("real LLM summarization failed");
+
+    eprintln!("\n══ Real LLM Summarizer Test ═════════════════════════════");
+    eprintln!("  Input : {} chars", test_content.len());
+    eprintln!("  Output: {} chars", summary.len());
+    eprintln!("  Summary: {summary}");
+
+    assert!(!summary.is_empty(), "LLM returned empty summary");
+    assert!(
+        summary.len() < test_content.len(),
+        "summary ({}) should be shorter than input ({})",
+        summary.len(),
+        test_content.len()
+    );
+
+    // Now test the full pipeline with real summarization
+    let pipeline = Pipeline::builder()
+        .counter(counter)
+        .layer(RegistryLayer::new(tools.clone(), &counter))
+        .layer(
+            MaskingLayer::new()
+                .retain_turns(2)
+                .retain_turns_tool(1)
+                .retain_turns_assistant(3)
+                .json_truncate(JsonTruncateConfig::default()),
+        )
+        .layer(SummarizationLayer::new(summarizer).age_threshold(3).min_content_tokens(20))
+        .layer(CompactionLayer::new())
+        .layer(BudgetLayer::new(32_000).preserve_recent(4))
+        .layer(CacheAlignLayer::generic())
+        .build();
+
+    let mut ctx = Ctx::new(messages, tools.clone(), 6);
+    let result = pipeline.optimize(&mut ctx);
+    let after = count_ctx_tokens(&ctx, &counter);
+
+    let saved = baseline.saturating_sub(after);
+    let pct = (saved as f64 / baseline as f64) * 100.0;
+
+    eprintln!("\n  ── Full Pipeline with Real LLM ──");
+    eprintln!("  Without distil : {:>6} tokens", baseline);
+    eprintln!("  With distil    : {:>6} tokens", after);
+    eprintln!("  Saved          : {:>6} tokens  ({:.1}%)", saved, pct);
+    for lr in &result.layers {
+        let layer_saved = lr.tokens_saved();
+        eprintln!(
+            "    {:15} {:>5} → {:>5}  (saved {:>4}, {:>5.1}%)  {}",
+            lr.layer, lr.tokens_before, lr.tokens_after,
+            layer_saved, lr.percentage_saved(), lr.detail
+        );
+    }
+
+    // Find the summary message to show what the LLM actually produced
+    let summary_msg = ctx.messages.iter().find(|m| m.content.contains("## Conversation Summary"));
+    if let Some(msg) = summary_msg {
+        eprintln!("\n  ── LLM Summary ──");
+        eprintln!("  {}", msg.content);
+    }
+
+    assert!(
+        pct > 50.0,
+        "real LLM pipeline should save >50%, got {pct:.1}%"
+    );
+}
