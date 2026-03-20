@@ -1,3 +1,26 @@
+/// Default system prompt for conversation summarization.
+///
+/// Follows Anthropic's context engineering guidance: preserve architectural decisions,
+/// unresolved bugs, implementation details, and file paths. Discard redundant tool
+/// outputs, verbose build logs, and repetitive confirmation messages.
+pub const DEFAULT_SUMMARIZER_SYSTEM_PROMPT: &str = "\
+You are a conversation summarizer for an LLM coding agent. \
+Produce a dense, factual summary that another LLM can use to continue the work. \
+No preamble — output only the summary.\n\n\
+PRESERVE (high signal):\n\
+- Architectural decisions and their rationale\n\
+- File paths created, modified, or deleted\n\
+- Commands run and their meaningful outcomes (pass/fail, error messages)\n\
+- Unresolved issues, bugs, or open questions\n\
+- Configuration values, environment variables, API endpoints\n\
+- Key data: schema structures, type definitions, function signatures\n\n\
+DISCARD (low signal):\n\
+- Verbose build/compile logs (just note success/failure + warning count)\n\
+- Full tool output JSON (summarize the result, not the raw data)\n\
+- Repetitive confirmation messages\n\
+- Intermediate reasoning that led to a final decision (keep the decision)\n\
+- File contents that were read but not modified";
+
 /// Trait for semantic summarization of conversation content.
 ///
 /// Distil is sync and LLM-agnostic — it never calls an LLM directly.
@@ -97,7 +120,7 @@ impl Summarizer for HttpSummarizer {
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a conversation summarizer. Produce a dense, factual summary preserving key decisions, outcomes, file paths, commands run, and results. No preamble — output only the summary."
+                    "content": DEFAULT_SUMMARIZER_SYSTEM_PROMPT
                 },
                 {
                     "role": "user",
@@ -198,7 +221,7 @@ impl Summarizer for OllamaSummarizer {
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a conversation summarizer. Produce a dense, factual summary preserving key decisions, outcomes, file paths, commands run, and results. No preamble — output only the summary."
+                    "content": DEFAULT_SUMMARIZER_SYSTEM_PROMPT
                 },
                 {
                     "role": "user",

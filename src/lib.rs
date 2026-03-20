@@ -45,6 +45,7 @@ pub mod budget;
 pub mod config;
 pub mod counter;
 pub mod error;
+pub mod http;
 pub mod layers;
 pub mod masker;
 #[cfg(feature = "metrics")]
@@ -64,7 +65,7 @@ pub use layers::*;
 pub use masker::JsonTruncateConfig;
 pub use pipeline::{Ctx, Layer, LayerResult, OptimizationState, Phase, Pipeline, PipelineResult, ToolExecutor};
 pub use probe::{Probe, ProbeEvaluator, ProbeReport, ProbeResult, ProbeType};
-pub use summarizer::Summarizer;
+pub use summarizer::{Summarizer, DEFAULT_SUMMARIZER_SYSTEM_PROMPT};
 #[cfg(feature = "proxy")]
 pub use summarizer::{HttpSummarizer, OllamaSummarizer};
 pub use types::{Message, ToolSpec};

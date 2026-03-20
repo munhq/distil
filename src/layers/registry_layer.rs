@@ -73,6 +73,7 @@ impl Layer for RegistryLayer {
                 if let Some(ref cached) = state.cached_catalog {
                     ctx.catalog = Some(cached.clone());
                     ctx.tools = vec![self.registry.search_tool_spec()];
+                    #[cfg(feature = "code-mode")]
                     ctx.insert(crate::registry::ToolTypeScriptDefs(self.registry.to_typescript_defs()));
                     let tokens_after = ctx.total_tokens(counter);
                     return LayerResult {
@@ -94,6 +95,7 @@ impl Layer for RegistryLayer {
         ctx.catalog = Some(self.registry.catalog().to_string());
 
         // Pre-compute TS defs for CodeModeLayer
+        #[cfg(feature = "code-mode")]
         ctx.insert(crate::registry::ToolTypeScriptDefs(self.registry.to_typescript_defs()));
 
         // Update optimization state with cached catalog
@@ -130,18 +132,17 @@ impl Layer for RegistryLayer {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
+        let detail = args
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .unwrap_or("full");
+
         let results = self.registry.search(query, 5);
 
         if results.is_empty() {
             return Some(format!("No tools found matching \"{query}\". Try different keywords."));
         }
 
-        let mut output = format!("Found {} matching tool(s):\n\n", results.len());
-        for tool in &results {
-            output.push_str(&tool.to_prompt_text());
-            output.push_str("\n\n");
-        }
-
-        Some(output)
+        Some(self.registry.format_results(&results, detail))
     }
 }
