@@ -18,4 +18,4 @@ pub use summarization_layer::{
     CompletedSummary, PendingSummarization, SummarizationLayer, SummarizationState,
 };
 #[cfg(feature = "code-mode")]
-pub use code_mode_layer::{CodeModeActive, CodeModeLayer};
+pub use code_mode_layer::{CodeModeActive, CodeModeLayer, ToolPermission};

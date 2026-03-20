@@ -34,13 +34,15 @@
 
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
 use distil::Layer;
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -60,6 +62,10 @@ struct Config {
     summarizer_api_key: Option<String>,
     /// Path to distil.toml for declarative pipeline configuration.
     pipeline_config: Option<distil::PipelineConfig>,
+    /// Bearer token for authenticating requests to distil's own endpoints.
+    /// When set, all requests must include `Authorization: Bearer <token>`.
+    /// Does NOT apply to upstream forwarding headers — those are passed through as-is.
+    api_key: Option<String>,
 }
 
 impl Config {
@@ -115,6 +121,9 @@ impl Config {
             summarizer_endpoint: std::env::var("DISTIL_SUMMARIZER_ENDPOINT").ok(),
             summarizer_model: std::env::var("DISTIL_SUMMARIZER_MODEL").ok(),
             summarizer_api_key: std::env::var("DISTIL_SUMMARIZER_API_KEY").ok(),
+            api_key: std::env::var("DISTIL_API_KEY")
+                .or_else(|_| get_flag("--api-key").ok_or(()))
+                .ok(),
             pipeline_config,
         }
     }
@@ -326,11 +335,11 @@ fn role_str(role: &distil::types::Role) -> &'static str {
     }
 }
 
+/// RFC 9457-compliant structured error response.
+/// Delegates to `distil::http::error_body()` for the JSON structure.
 fn error_response(status: StatusCode, message: &str) -> (StatusCode, Json<Value>) {
-    (
-        status,
-        Json(json!({"error": {"message": message, "type": "distil_error"}})),
-    )
+    let body = distil::http::error_body(status.as_u16(), message);
+    (status, Json(body))
 }
 
 fn build_pipeline_from_config(
@@ -624,43 +633,66 @@ async fn chat_completions(
 
     let status = upstream_resp.status();
     let resp_headers = upstream_resp.headers().clone();
-    let resp_bytes = match upstream_resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => {
-            return error_response(
-                StatusCode::BAD_GATEWAY,
-                &format!("upstream read error: {e}"),
-            )
-            .into_response();
-        }
-    };
 
-    let mut response = Response::builder()
-        .status(status)
-        .body(Body::from(resp_bytes))
-        .unwrap();
+    // Check if upstream is streaming (SSE)
+    let is_streaming = resp_headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.contains("text/event-stream"));
 
-    let headers_mut = response.headers_mut();
+    let mut distil_headers = HeaderMap::new();
     for (k, v) in &resp_headers {
-        if k == "content-type" || k == "content-length" {
-            let _ = headers_mut.insert(k, v.clone());
+        let name = k.as_str();
+        if name == "content-type" || name == "transfer-encoding" || name == "cache-control" {
+            let _ = distil_headers.insert(k, v.clone());
         }
     }
-
-    let _ = headers_mut.insert(
+    let _ = distil_headers.insert(
         HeaderName::from_static("x-distil-tokens-before"),
         HeaderValue::from_str(&tokens_before.to_string()).unwrap(),
     );
-    let _ = headers_mut.insert(
+    let _ = distil_headers.insert(
         HeaderName::from_static("x-distil-tokens-after"),
         HeaderValue::from_str(&tokens_after.to_string()).unwrap(),
     );
-    let _ = headers_mut.insert(
+    let _ = distil_headers.insert(
         HeaderName::from_static("x-distil-tokens-saved"),
         HeaderValue::from_str(&saved.to_string()).unwrap(),
     );
 
-    response
+    if is_streaming {
+        // Stream SSE chunks through without buffering
+        let byte_stream = upstream_resp.bytes_stream().map(|chunk| {
+            chunk.map_err(axum::Error::new)
+        });
+        let body = Body::from_stream(byte_stream);
+
+        let mut response = Response::builder()
+            .status(status)
+            .body(body)
+            .unwrap();
+        *response.headers_mut() = distil_headers;
+        response
+    } else {
+        // Non-streaming: buffer the full response
+        let resp_bytes = match upstream_resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                return error_response(
+                    StatusCode::BAD_GATEWAY,
+                    &format!("upstream read error: {e}"),
+                )
+                .into_response();
+            }
+        };
+
+        let mut response = Response::builder()
+            .status(status)
+            .body(Body::from(resp_bytes))
+            .unwrap();
+        *response.headers_mut() = distil_headers;
+        response
+    }
 }
 
 // ── GET /v1/health ───────────────────────────────────────────────────────────
@@ -692,6 +724,32 @@ async fn prometheus_metrics(State(state): State<Arc<ProxyState>>) -> impl IntoRe
     )
 }
 
+// ── Auth middleware ───────────────────────────────────────────────────────────
+
+/// Bearer token authentication middleware.
+/// Skips auth for health endpoints. Returns RFC 9457 error on failure.
+async fn auth_middleware(
+    State(state): State<Arc<ProxyState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let auth_header = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok());
+    let path = req.uri().path();
+
+    if distil::http::check_bearer_auth(auth_header, path, state.config.api_key.as_deref()) {
+        next.run(req).await
+    } else {
+        error_response(
+            StatusCode::UNAUTHORIZED,
+            "invalid or missing Authorization: Bearer <token>",
+        )
+        .into_response()
+    }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -716,6 +774,7 @@ async fn main() {
         port,
         budget = config.budget,
         mode,
+        auth = config.api_key.is_some(),
         "distil-proxy starting"
     );
 
@@ -730,7 +789,7 @@ async fn main() {
         metrics: distil::DistilMetrics::new(),
     });
 
-    let mut app = Router::new()
+    let app = Router::new()
         // Direct API endpoints
         .route("/v1/optimize", post(optimize))
         .route("/v1/tool_call", post(tool_call))
@@ -742,14 +801,14 @@ async fn main() {
 
     // Metrics endpoint (only when feature enabled)
     #[cfg(feature = "metrics")]
-    {
-        app = app
-            .route("/metrics", get(prometheus_metrics))
-            .route("/v1/metrics", get(prometheus_metrics));
+    let app = {
         tracing::info!("prometheus metrics enabled at /metrics");
-    }
+        app.route("/metrics", get(prometheus_metrics))
+            .route("/v1/metrics", get(prometheus_metrics))
+    };
 
     let app = app
+        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
@@ -760,5 +819,32 @@ async fn main() {
         .unwrap_or_else(|e| panic!("failed to bind {addr}: {e}"));
 
     tracing::info!("listening on {addr}");
-    axum::serve(listener, app).await.expect("server failed");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .expect("server failed");
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => tracing::info!("received Ctrl+C, shutting down"),
+        () = terminate => tracing::info!("received SIGTERM, shutting down"),
+    }
 }

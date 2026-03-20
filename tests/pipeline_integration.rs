@@ -3,6 +3,7 @@ use distil::layers::*;
 use distil::masker::JsonTruncateConfig;
 use distil::pipeline::{Ctx, Layer, Pipeline};
 use distil::types::{Message, ToolSpec};
+use distil::TokenCounter;
 
 /// Simulate a realistic 30-tool agent.
 fn realistic_tools() -> Vec<ToolSpec> {
@@ -499,6 +500,87 @@ fn tool_search_still_works() {
     );
     assert!(search_result.is_some());
     assert!(search_result.unwrap().contains("git"));
+}
+
+#[test]
+fn tool_search_detail_levels_in_pipeline() {
+    let counter = EstimateCounter;
+    let tools = realistic_tools();
+
+    let pipeline = Pipeline::builder()
+        .counter(counter)
+        .layer(RegistryLayer::new(tools.clone(), &counter))
+        .build();
+
+    // Default (no detail param) returns full schemas
+    let full = pipeline.handle_tool_call(
+        "tool_search",
+        &serde_json::json!({"query": "file"}),
+    ).unwrap();
+    assert!(full.contains("Parameters:"), "default should return full schemas: {full}");
+
+    // Explicit full
+    let full_explicit = pipeline.handle_tool_call(
+        "tool_search",
+        &serde_json::json!({"query": "file", "detail": "full"}),
+    ).unwrap();
+    assert!(full_explicit.contains("Parameters:"), "explicit full should have schemas");
+
+    // Brief — names + descriptions, no schemas
+    let brief = pipeline.handle_tool_call(
+        "tool_search",
+        &serde_json::json!({"query": "file", "detail": "brief"}),
+    ).unwrap();
+    assert!(brief.contains("file_read"), "brief should list file_read");
+    assert!(!brief.contains("Parameters:"), "brief should NOT have schemas: {brief}");
+
+    // Name only — just names
+    let name_only = pipeline.handle_tool_call(
+        "tool_search",
+        &serde_json::json!({"query": "file", "detail": "name_only"}),
+    ).unwrap();
+    assert!(name_only.contains("file_read"), "name_only should list file_read");
+    assert!(name_only.contains("file_write"), "name_only should list file_write");
+    assert!(!name_only.contains("Parameters:"), "name_only should NOT have schemas");
+    // name_only is a single line, not multi-line tool blocks
+    assert!(!name_only.contains('\n'), "name_only should be a single line: {name_only}");
+
+    // Progressive disclosure saves tokens
+    let name_tokens = counter.count(&name_only);
+    let brief_tokens = counter.count(&brief);
+    let full_tokens = counter.count(&full);
+    assert!(
+        name_tokens < brief_tokens && brief_tokens < full_tokens,
+        "token usage should increase with detail: name_only={name_tokens}, brief={brief_tokens}, full={full_tokens}"
+    );
+}
+
+#[test]
+fn tool_search_no_match_returns_helpful_message() {
+    let counter = EstimateCounter;
+    let tools = realistic_tools();
+
+    let pipeline = Pipeline::builder()
+        .counter(counter)
+        .layer(RegistryLayer::new(tools.clone(), &counter))
+        .build();
+
+    // No matches — should work regardless of detail level
+    let result = pipeline.handle_tool_call(
+        "tool_search",
+        &serde_json::json!({"query": "xyznonexistent", "detail": "name_only"}),
+    ).unwrap();
+    assert!(result.contains("No tools found"), "should indicate no match: {result}");
+}
+
+#[test]
+fn default_summarizer_prompt_is_exported() {
+    // Verify the constant is accessible from the crate
+    let prompt = distil::DEFAULT_SUMMARIZER_SYSTEM_PROMPT;
+    assert!(prompt.contains("PRESERVE"), "should have preserve section");
+    assert!(prompt.contains("DISCARD"), "should have discard section");
+    assert!(prompt.contains("Architectural decisions"), "should mention architectural decisions");
+    assert!(prompt.contains("File paths"), "should mention file paths");
 }
 
 #[cfg(feature = "tiktoken")]

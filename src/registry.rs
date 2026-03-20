@@ -62,17 +62,54 @@ impl ToolRegistry {
     pub fn search_tool_spec(&self) -> ToolSpec {
         ToolSpec {
             name: "tool_search".into(),
-            description: "Search for available tools by keyword. Returns full tool schemas for matching tools. Use this before calling a tool you haven't used yet.".into(),
+            description: "Search for available tools by keyword. Returns tool information at the requested detail level. Use this before calling a tool you haven't used yet.".into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
                         "description": "Keywords to search for (e.g. 'file operations', 'git', 'memory')"
+                    },
+                    "detail": {
+                        "type": "string",
+                        "enum": ["name_only", "brief", "full"],
+                        "description": "Detail level: 'name_only' returns just names, 'brief' returns names + descriptions, 'full' (default) returns complete schemas"
                     }
                 },
                 "required": ["query"]
             }),
+        }
+    }
+
+    /// Format search results at the given detail level.
+    pub fn format_results(&self, results: &[&ToolSpec], detail: &str) -> String {
+        if results.is_empty() {
+            return String::new();
+        }
+
+        match detail {
+            "name_only" => {
+                let mut out = format!("Found {} matching tool(s): ", results.len());
+                let names: Vec<&str> = results.iter().map(|t| t.name.as_str()).collect();
+                out.push_str(&names.join(", "));
+                out
+            }
+            "brief" => {
+                let mut out = format!("Found {} matching tool(s):\n", results.len());
+                for tool in results {
+                    out.push_str(&format!("- `{}` — {}\n", tool.name, first_sentence(&tool.description)));
+                }
+                out
+            }
+            _ => {
+                // "full" or unrecognized — return complete schemas
+                let mut out = format!("Found {} matching tool(s):\n\n", results.len());
+                for tool in results {
+                    out.push_str(&tool.to_prompt_text());
+                    out.push_str("\n\n");
+                }
+                out
+            }
         }
     }
 
@@ -430,5 +467,62 @@ mod tests {
         let spec = registry.search_tool_spec();
         assert_eq!(spec.name, "tool_search");
         assert!(spec.parameters["properties"]["query"].is_object());
+        assert!(spec.parameters["properties"]["detail"].is_object(), "should have detail param");
+    }
+
+    #[test]
+    fn format_results_name_only() {
+        let counter = EstimateCounter;
+        let registry = ToolRegistry::new(sample_tools(), &counter);
+        let results = registry.search("file", 10);
+        let output = registry.format_results(&results, "name_only");
+        assert!(output.contains("file_read"), "should list file_read: {output}");
+        assert!(output.contains("file_write"), "should list file_write: {output}");
+        // name_only should NOT contain parameter schemas
+        assert!(!output.contains("Parameters:"), "name_only should not have schemas: {output}");
+    }
+
+    #[test]
+    fn format_results_brief() {
+        let counter = EstimateCounter;
+        let registry = ToolRegistry::new(sample_tools(), &counter);
+        let results = registry.search("shell", 10);
+        let output = registry.format_results(&results, "brief");
+        assert!(output.contains("shell"), "should have tool name: {output}");
+        assert!(output.contains("Execute a shell command."), "should have brief description: {output}");
+        assert!(!output.contains("Parameters:"), "brief should not have schemas: {output}");
+    }
+
+    #[test]
+    fn format_results_full() {
+        let counter = EstimateCounter;
+        let registry = ToolRegistry::new(sample_tools(), &counter);
+        let results = registry.search("git", 10);
+        let output = registry.format_results(&results, "full");
+        assert!(output.contains("Parameters:"), "full should have schemas: {output}");
+    }
+
+    #[test]
+    fn format_results_detail_levels_token_efficiency() {
+        let counter = EstimateCounter;
+        let registry = ToolRegistry::new(sample_tools(), &counter);
+        let results = registry.search("file", 10);
+
+        let name_only = registry.format_results(&results, "name_only");
+        let brief = registry.format_results(&results, "brief");
+        let full = registry.format_results(&results, "full");
+
+        let name_tokens = counter.count(&name_only);
+        let brief_tokens = counter.count(&brief);
+        let full_tokens = counter.count(&full);
+
+        assert!(
+            name_tokens < brief_tokens,
+            "name_only ({name_tokens}) should use fewer tokens than brief ({brief_tokens})"
+        );
+        assert!(
+            brief_tokens < full_tokens,
+            "brief ({brief_tokens}) should use fewer tokens than full ({full_tokens})"
+        );
     }
 }

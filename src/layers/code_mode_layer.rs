@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,6 +11,31 @@ use crate::types::ToolSpec;
 /// Marker: CodeModeLayer is active in the pipeline.
 #[derive(Debug, Clone)]
 pub struct CodeModeActive;
+
+/// Permission scope for tools available inside the CodeMode sandbox.
+///
+/// Controls what categories of tools a script can invoke. By default, all
+/// tools are allowed (backward compatible). When restricted, only tools
+/// matching the allowed scopes can be called — others return an error.
+///
+/// This is the primary security boundary for CodeMode: QuickJS has no
+/// filesystem/network access by default, so the only escape path is through
+/// tool functions. Restricting which tools are callable closes that path.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ToolPermission {
+    /// Read-only operations (file_read, git_status, git_log, etc.)
+    ReadOnly,
+    /// Write operations (file_write, git_commit, etc.)
+    Write,
+    /// Shell/command execution
+    Shell,
+    /// Network operations (http_request, browser_*, web_search)
+    Network,
+    /// Distil's own meta-tools (tool_search, note_read, note_write)
+    MetaTool,
+    /// Allow a specific tool by exact name
+    Named(String),
+}
 
 /// Handler function type for routing tool calls to the pipeline's own meta-tools.
 type PipelineToolHandler = dyn Fn(&str, &serde_json::Value) -> Option<String> + Send + Sync;
@@ -76,10 +102,17 @@ pub struct CodeModeLayer {
     memory_limit: usize,
     /// Tool specs to register as JS globals. If empty, all executor tools are available.
     tool_names: Vec<String>,
+    /// Permission scopes for tool access. Empty = allow all (default, backward compatible).
+    permissions: HashSet<ToolPermission>,
+    /// Tools explicitly denied (takes precedence over permissions).
+    denied_tools: HashSet<String>,
 }
 
 impl CodeModeLayer {
     /// Create a new Code Mode layer with the given tool executor.
+    ///
+    /// By default, all tools are allowed (backward compatible). Use
+    /// [`permissions`] and [`deny_tools`] to restrict access.
     pub fn new(executor: impl ToolExecutor + 'static) -> Self {
         Self {
             executor: Arc::new(executor),
@@ -87,6 +120,8 @@ impl CodeModeLayer {
             timeout: Duration::from_secs(10),
             memory_limit: 256 * 1024 * 1024, // 256MB
             tool_names: Vec::new(),
+            permissions: HashSet::new(),
+            denied_tools: HashSet::new(),
         }
     }
 
@@ -98,6 +133,8 @@ impl CodeModeLayer {
             timeout: Duration::from_secs(10),
             memory_limit: 256 * 1024 * 1024,
             tool_names: Vec::new(),
+            permissions: HashSet::new(),
+            denied_tools: HashSet::new(),
         }
     }
 
@@ -118,6 +155,100 @@ impl CodeModeLayer {
     pub fn tool_names(mut self, names: Vec<String>) -> Self {
         self.tool_names = names;
         self
+    }
+
+    /// Set allowed permission scopes. When non-empty, only tools matching these
+    /// scopes can be called from scripts. Empty = allow all (default).
+    ///
+    /// ```rust,ignore
+    /// // Only allow read-only tools and meta-tools inside scripts:
+    /// let layer = CodeModeLayer::new(executor)
+    ///     .permissions(vec![ToolPermission::ReadOnly, ToolPermission::MetaTool]);
+    /// ```
+    pub fn permissions(mut self, perms: Vec<ToolPermission>) -> Self {
+        self.permissions = perms.into_iter().collect();
+        self
+    }
+
+    /// Explicitly deny specific tools by name. Takes precedence over permissions.
+    ///
+    /// ```rust,ignore
+    /// // Allow everything except shell:
+    /// let layer = CodeModeLayer::new(executor)
+    ///     .deny_tools(vec!["shell".into()]);
+    /// ```
+    pub fn deny_tools(mut self, names: Vec<String>) -> Self {
+        self.denied_tools = names.into_iter().collect();
+        self
+    }
+
+    /// Check if a tool is allowed by the current permission configuration.
+    fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        // Deny list takes precedence
+        if self.denied_tools.contains(tool_name) {
+            return false;
+        }
+
+        // If no permissions configured, allow all (backward compatible)
+        if self.permissions.is_empty() {
+            return true;
+        }
+
+        // Check against permission scopes
+        for perm in &self.permissions {
+            match perm {
+                ToolPermission::Named(name) if name == tool_name => return true,
+                ToolPermission::MetaTool => {
+                    if matches!(tool_name, "tool_search" | "note_read" | "note_write") {
+                        return true;
+                    }
+                }
+                ToolPermission::ReadOnly => {
+                    if tool_name.contains("read")
+                        || tool_name.contains("get")
+                        || tool_name.contains("list")
+                        || tool_name.contains("status")
+                        || tool_name.contains("log")
+                        || tool_name.contains("diff")
+                        || tool_name.contains("search")
+                        || tool_name.contains("query")
+                        || tool_name.contains("extract")
+                        || tool_name.contains("analyze")
+                    {
+                        return true;
+                    }
+                }
+                ToolPermission::Write => {
+                    if tool_name.contains("write")
+                        || tool_name.contains("create")
+                        || tool_name.contains("update")
+                        || tool_name.contains("delete")
+                        || tool_name.contains("commit")
+                        || tool_name.contains("store")
+                        || tool_name.contains("publish")
+                    {
+                        return true;
+                    }
+                }
+                ToolPermission::Shell => {
+                    if matches!(tool_name, "shell" | "exec" | "run" | "command") {
+                        return true;
+                    }
+                }
+                ToolPermission::Network => {
+                    if tool_name.starts_with("http")
+                        || tool_name.starts_with("browser")
+                        || tool_name.starts_with("web")
+                        || tool_name.starts_with("fetch")
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
     }
 
     /// Set a pipeline handler for distil's own meta-tools (tool_search, note_read, etc.)
@@ -173,6 +304,12 @@ impl CodeModeLayer {
             } else {
                 self.tool_names.iter().map(|s| s.as_str()).collect()
             };
+
+            // Filter out denied tools at registration time (they won't even exist as globals)
+            let tool_names_to_register: Vec<&str> = tool_names_to_register
+                .into_iter()
+                .filter(|name| self.is_tool_allowed(name))
+                .collect();
 
             for tool_name in &tool_names_to_register {
                 let name = tool_name.to_string();
@@ -505,5 +642,153 @@ mod tests {
             output.contains("ERROR") || output.contains("unknown tool"),
             "should report executor error: {output}"
         );
+    }
+
+    // ── Permission tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn default_permissions_allow_all() {
+        let layer = CodeModeLayer::new(MockExecutor);
+        assert!(layer.is_tool_allowed("shell"));
+        assert!(layer.is_tool_allowed("file_write"));
+        assert!(layer.is_tool_allowed("http_request"));
+        assert!(layer.is_tool_allowed("anything"));
+    }
+
+    #[test]
+    fn deny_tools_blocks_specific_tools() {
+        let layer = CodeModeLayer::new(MockExecutor)
+            .deny_tools(vec!["shell".into(), "file_write".into()]);
+
+        assert!(!layer.is_tool_allowed("shell"));
+        assert!(!layer.is_tool_allowed("file_write"));
+        assert!(layer.is_tool_allowed("file_read"));
+        assert!(layer.is_tool_allowed("git_status"));
+    }
+
+    #[test]
+    fn read_only_permissions() {
+        let layer = CodeModeLayer::new(MockExecutor)
+            .permissions(vec![ToolPermission::ReadOnly]);
+
+        assert!(layer.is_tool_allowed("file_read"));
+        assert!(layer.is_tool_allowed("git_status"));
+        assert!(layer.is_tool_allowed("git_log"));
+        assert!(layer.is_tool_allowed("git_diff"));
+        assert!(layer.is_tool_allowed("web_search"));
+        assert!(layer.is_tool_allowed("sql_query"));
+        assert!(layer.is_tool_allowed("browser_extract"));
+
+        assert!(!layer.is_tool_allowed("shell"));
+        assert!(!layer.is_tool_allowed("file_write"));
+        assert!(!layer.is_tool_allowed("git_commit"));
+        assert!(!layer.is_tool_allowed("http_request"));
+    }
+
+    #[test]
+    fn combined_permissions() {
+        let layer = CodeModeLayer::new(MockExecutor)
+            .permissions(vec![ToolPermission::ReadOnly, ToolPermission::MetaTool]);
+
+        assert!(layer.is_tool_allowed("file_read"));
+        assert!(layer.is_tool_allowed("tool_search"));
+        assert!(layer.is_tool_allowed("note_read"));
+        assert!(layer.is_tool_allowed("note_write"));
+
+        assert!(!layer.is_tool_allowed("shell"));
+        assert!(!layer.is_tool_allowed("http_request"));
+    }
+
+    #[test]
+    fn named_permission() {
+        let layer = CodeModeLayer::new(MockExecutor)
+            .permissions(vec![
+                ToolPermission::Named("shell".into()),
+                ToolPermission::Named("git_status".into()),
+            ]);
+
+        assert!(layer.is_tool_allowed("shell"));
+        assert!(layer.is_tool_allowed("git_status"));
+        assert!(!layer.is_tool_allowed("file_read"));
+        assert!(!layer.is_tool_allowed("http_request"));
+    }
+
+    #[test]
+    fn deny_overrides_permissions() {
+        let layer = CodeModeLayer::new(MockExecutor)
+            .permissions(vec![ToolPermission::Shell, ToolPermission::ReadOnly])
+            .deny_tools(vec!["shell".into()]);
+
+        // Shell is in the Shell permission scope but explicitly denied
+        assert!(!layer.is_tool_allowed("shell"));
+        // Read-only still works
+        assert!(layer.is_tool_allowed("file_read"));
+    }
+
+    #[test]
+    fn denied_tools_not_registered_in_sandbox() {
+        let layer = CodeModeLayer::new(MockExecutor)
+            .tool_names(vec!["shell".into(), "file_read".into()])
+            .deny_tools(vec!["shell".into()]);
+
+        // Script tries to call shell — it shouldn't be registered as a global
+        let result = layer.handle_tool_call(
+            "run_script",
+            &serde_json::json!({
+                "script": r#"
+                    let content = file_read('{"path": "test.rs"}');
+                    return content;
+                "#
+            }),
+        );
+
+        let output = result.unwrap();
+        assert!(
+            output.contains("contents of test.rs"),
+            "file_read should work: {output}"
+        );
+
+        // Now try calling the denied tool — should fail because it's not a global
+        let result2 = layer.handle_tool_call(
+            "run_script",
+            &serde_json::json!({
+                "script": "return typeof shell;"
+            }),
+        );
+
+        let output2 = result2.unwrap();
+        assert!(
+            output2.contains("undefined"),
+            "shell should not be registered: {output2}"
+        );
+    }
+
+    #[test]
+    fn permission_scoped_tools_not_registered() {
+        let layer = CodeModeLayer::new(MockExecutor)
+            .tool_names(vec!["shell".into(), "file_read".into()])
+            .permissions(vec![ToolPermission::ReadOnly]);
+
+        // shell is not in ReadOnly scope, so it shouldn't be registered
+        let result = layer.handle_tool_call(
+            "run_script",
+            &serde_json::json!({
+                "script": "return typeof shell;"
+            }),
+        );
+
+        let output = result.unwrap();
+        assert!(output.contains("undefined"), "shell should not be registered: {output}");
+
+        // file_read is ReadOnly, should work
+        let result2 = layer.handle_tool_call(
+            "run_script",
+            &serde_json::json!({
+                "script": r#"return file_read('{"path": "test.rs"}');"#
+            }),
+        );
+
+        let output2 = result2.unwrap();
+        assert!(output2.contains("contents of test.rs"), "file_read should work: {output2}");
     }
 }

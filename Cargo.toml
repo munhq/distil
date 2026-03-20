@@ -15,7 +15,7 @@ default = []
 # model-specific for others). Without this feature, EstimateCounter is used.
 tiktoken = ["dep:tiktoken-rs"]
 # Enable the HTTP proxy binary (distil-proxy). Adds axum + reqwest.
-proxy = ["dep:axum", "dep:tokio", "dep:reqwest", "dep:tower-http", "dep:tracing", "dep:tracing-subscriber", "config"]
+proxy = ["dep:axum", "dep:tokio", "dep:reqwest", "dep:tower-http", "dep:tracing", "dep:tracing-subscriber", "dep:futures-util", "config"]
 # Enable Prometheus metrics collection and /metrics endpoint.
 metrics = ["dep:prometheus"]
 # Enable TOML-based pipeline configuration.
@@ -50,10 +50,11 @@ schemars = { version = "1", optional = true }
 # proxy feature
 axum = { version = "0.8", optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
-reqwest = { version = "0.12", features = ["json", "blocking"], optional = true }
+reqwest = { version = "0.12", features = ["json", "blocking", "stream"], optional = true }
 tower-http = { version = "0.6", features = ["trace", "cors"], optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+futures-util = { version = "0.3", optional = true }
 
 [[bin]]
 name = "distil-proxy"
