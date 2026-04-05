@@ -25,11 +25,12 @@
 use std::sync::Arc;
 
 use rmcp::{
-    handler::server::{tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Content, Implementation, ServerCapabilities},
-    tool, tool_router, ErrorData as McpError, ServerHandler,
+    handler::server::router::tool::ToolRouter,
+    handler::server::wrapper::Parameters,
+    model::{CallToolResult, Content, ServerCapabilities},
+    tool, tool_router, tool_handler, ErrorData as McpError, ServerHandler,
     service::ServiceExt,
-    transport::io::stdio,
+    transport::stdio,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -253,26 +254,17 @@ impl DistilServer {
 
 // ── Implement ServerHandler ───────────────────────────────────────────────────
 
+#[tool_handler]
 impl ServerHandler for DistilServer {
     fn get_info(&self) -> rmcp::model::ServerInfo {
         rmcp::model::ServerInfo {
-            protocol_version: Default::default(),
-            capabilities: ServerCapabilities::builder()
-                .enable_tools()
-                .build(),
-            server_info: Implementation {
-                name: "distil".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-                title: Some("Distil Context Optimizer".into()),
-                description: Some("Context optimization middleware for LLM agents — 50-90% token savings".into()),
-                icons: None,
-                website_url: None,
-            },
             instructions: Some(
                 "Use 'optimize' to compress conversation context before sending to an LLM. \
                  Use 'tool_call' to handle distil-injected meta-tools (tool_search, note_read, note_write)."
                     .into(),
             ),
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            ..Default::default()
         }
     }
 }
