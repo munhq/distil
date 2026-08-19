@@ -43,6 +43,8 @@
 pub mod budget;
 #[cfg(feature = "config")]
 pub mod config;
+#[cfg(feature = "corpus")]
+pub mod corpus;
 pub mod counter;
 pub mod error;
 pub mod http;

@@ -24,6 +24,10 @@ config = ["dep:toml"]
 code-mode = ["dep:rquickjs"]
 # Enable MCP (Model Context Protocol) server mode.
 mcp = ["dep:rmcp", "dep:tokio", "dep:schemars"]
+# Enable the real-transcript corpus loader (no extra dependencies).
+corpus = []
+# Enable the distil-bench measurement binary. Needs accurate token counts.
+bench = ["corpus", "tiktoken", "dep:rayon"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -33,6 +37,9 @@ regex = "1"
 
 # tiktoken feature
 tiktoken-rs = { version = "0.6", optional = true }
+
+# bench feature (parallel corpus walk)
+rayon = { version = "1", optional = true }
 
 # metrics feature
 prometheus = { version = "0.14", optional = true }
@@ -65,6 +72,11 @@ required-features = ["proxy"]
 name = "distil-mcp"
 path = "src/bin/mcp_server.rs"
 required-features = ["mcp"]
+
+[[bin]]
+name = "distil-bench"
+path = "src/bin/bench.rs"
+required-features = ["bench"]
 
 [dev-dependencies]
 pretty_assertions = "1"
