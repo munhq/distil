@@ -1,0 +1,32 @@
+distil-probe — LLM-graded retention: harness complete, run BLOCKED
+
+Blocker: no Anthropic credentials on this machine (no `ant`, no
+ANTHROPIC_API_KEY). The only local judge is ollama qwen2.5:3b.
+
+What was verified:
+  - The harness runs end to end and the parser is correct. On a short
+    context qwen2.5:3b returns well-formed probes and probe.rs parses
+    them:
+        recall|What was the specific error...|E0308 in src/auth.rs line 42
+        artifact|What change did you make...|Changed the return type
+        decision|Was the problem resolved...|Yes, by the return type
+  - distil's MaskingLayer compresses real sessions: 78.5% on a 15-message
+    session (3,070 -> 660 tokens), 49.6% on a 100-message session
+    (17,974 -> 9,053).
+
+What failed, and why it is the judge and not the harness:
+  - Probe generation sends the ENTIRE original conversation in one prompt.
+    On a 17,974-token session qwen2.5:3b returned nothing parseable and
+    generate_probes yielded 0 probes.
+  - probe.rs has no chunking, no retry and no format repair. Zero probes
+    is reported as an empty vector, not an error, so a caller with a weak
+    judge silently measures nothing. That is a defect worth fixing
+    independently of which model is used.
+
+To complete: run with a capable judge.
+    distil-probe <session.jsonl> --probes 6 --model <model>
+Substitute a Claude-backed Summarizer for RawOllama in src/bin/probe_run.rs.
+
+Until then the LLM-free number stands as the retention evidence:
+bench/results/artifact-retention.txt — 90.3% artifact retention, 9/12
+sessions perfect, measured against ground truth with no judge.
