@@ -1,0 +1,21 @@
+--- artifact retention, Headroom default ---
+session         truth   kept  dropped  retention  orphaned
+0e6b9fd8-867        1      1        0     100.0%         0
+26767d88-480        4      4        0     100.0%         0
+662c7263-5fa       13     13        0     100.0%        13
+3dc3748a-0a0        7      7        0     100.0%         7
+26d97465-050        9      9        0     100.0%         9
+3d9d7314-6ec        6      6        0     100.0%         6
+04fb35a8-90a       10      4        6      40.0%         6
+69011dd9-f16        7      5        2      71.4%         0
+14871816-a7a        9      8        1      88.9%         6
+40a76c05-221        9      9        0     100.0%         9
+0d9f0a8d-694       16     16        0     100.0%         1
+1665811b-b82        2      2        0     100.0%         0
+
+TOTAL artifacts: 93   retained: 84   retention: 90.3%
+of the truth set, 57 paths no longer exist on disk (deleted/renamed, not a compression fault)
+sessions with perfect artifact retention: 9/12
+  worst case 4/10 kept; dropped e.g. ['~/.gitconfig', '~/.gitconfig-<identity>', '~/.gitconfig-local']
+  worst case 5/7 kept; dropped e.g. ['~/.config/systemd/user/<unit>.service', '~/code/<project>/<unit>.service']
+  worst case 8/9 kept; dropped e.g. ['~/.config/systemd/user/<unit>.service']
