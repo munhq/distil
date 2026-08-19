@@ -1,43 +1,163 @@
+use distil::TokenCounter;
 use distil::counter::EstimateCounter;
 use distil::layers::*;
 use distil::masker::JsonTruncateConfig;
 use distil::pipeline::{Ctx, Layer, Pipeline};
 use distil::types::{Message, ToolSpec};
-use distil::TokenCounter;
 
 /// Simulate a realistic 30-tool agent.
 fn realistic_tools() -> Vec<ToolSpec> {
     let tools_data = [
-        ("shell", "Execute a shell command. Returns stdout, stderr, and exit code. Use for running builds, tests, system commands.", r#"{"type":"object","properties":{"command":{"type":"string","description":"The shell command to execute"},"timeout":{"type":"integer","description":"Timeout in seconds, default 30"},"working_dir":{"type":"string","description":"Working directory for the command"}},"required":["command"]}"#),
-        ("file_read", "Read a file from disk. Returns content as string. Supports line ranges for partial reads of large files.", r#"{"type":"object","properties":{"path":{"type":"string"},"line_start":{"type":"integer"},"line_end":{"type":"integer"}},"required":["path"]}"#),
-        ("file_write", "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Use for code generation and edits.", r#"{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}"#),
-        ("git_status", "Get the current git status showing staged, unstaged, and untracked files.", r#"{"type":"object","properties":{}}"#),
-        ("git_diff", "Show git diff for staged or unstaged changes. Supports path filters.", r#"{"type":"object","properties":{"staged":{"type":"boolean"},"path":{"type":"string"}}}"#),
-        ("git_log", "Show git commit log. Configurable count and format.", r#"{"type":"object","properties":{"count":{"type":"integer","default":10},"oneline":{"type":"boolean","default":true}}}"#),
-        ("git_commit", "Create a git commit with the given message.", r#"{"type":"object","properties":{"message":{"type":"string"},"all":{"type":"boolean"}},"required":["message"]}"#),
-        ("git_branch", "List, create, or switch git branches.", r#"{"type":"object","properties":{"action":{"type":"string","enum":["list","create","checkout"]},"name":{"type":"string"}},"required":["action"]}"#),
-        ("memory_store", "Store a key-value pair in the agent's persistent memory for cross-conversation recall.", r#"{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"},"namespace":{"type":"string"}},"required":["key","value"]}"#),
-        ("memory_recall", "Recall information from persistent memory by key or semantic search query.", r#"{"type":"object","properties":{"query":{"type":"string"},"namespace":{"type":"string"},"limit":{"type":"integer"}},"required":["query"]}"#),
-        ("memory_list", "List all keys in persistent memory, optionally filtered by namespace.", r#"{"type":"object","properties":{"namespace":{"type":"string"}}}"#),
-        ("memory_delete", "Delete a key from persistent memory.", r#"{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}"#),
-        ("http_request", "Make an HTTP request. Supports GET, POST, PUT, DELETE with headers, body, and auth.", r#"{"type":"object","properties":{"method":{"type":"string","enum":["GET","POST","PUT","DELETE","PATCH"]},"url":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"auth":{"type":"string"}},"required":["method","url"]}"#),
-        ("browser_navigate", "Navigate to a URL in the headless browser and return the page content.", r#"{"type":"object","properties":{"url":{"type":"string"},"wait_for":{"type":"string"},"screenshot":{"type":"boolean"}},"required":["url"]}"#),
-        ("browser_click", "Click an element on the current page by CSS selector.", r#"{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"]}"#),
-        ("browser_extract", "Extract text content from the current page using CSS selectors.", r#"{"type":"object","properties":{"selector":{"type":"string"},"attribute":{"type":"string"}},"required":["selector"]}"#),
-        ("web_search", "Search the web and return top results with titles, URLs, and snippets.", r#"{"type":"object","properties":{"query":{"type":"string"},"num_results":{"type":"integer","default":5}},"required":["query"]}"#),
-        ("delegate", "Delegate a subtask to a specialized sub-agent with isolated context.", r#"{"type":"object","properties":{"task":{"type":"string"},"agent_type":{"type":"string","enum":["research","code","review"]},"context":{"type":"string"}},"required":["task"]}"#),
-        ("sql_query", "Execute a SQL query against the project database. Read-only by default.", r#"{"type":"object","properties":{"query":{"type":"string"},"readonly":{"type":"boolean","default":true}},"required":["query"]}"#),
-        ("vision_analyze", "Analyze an image using vision capabilities. Describe, extract text, or answer questions.", r#"{"type":"object","properties":{"image_path":{"type":"string"},"prompt":{"type":"string"}},"required":["image_path","prompt"]}"#),
-        ("document_extract", "Extract text from documents (PDF, DOCX, etc.).", r#"{"type":"object","properties":{"path":{"type":"string"},"pages":{"type":"string"}},"required":["path"]}"#),
-        ("cloud_costs", "Query cloud infrastructure costs by service, region, or time period.", r#"{"type":"object","properties":{"provider":{"type":"string","enum":["aws","gcp","cloudflare"]},"service":{"type":"string"},"period":{"type":"string"}},"required":["provider"]}"#),
-        ("cloud_resources", "List cloud resources (instances, buckets, functions, etc.).", r#"{"type":"object","properties":{"provider":{"type":"string"},"resource_type":{"type":"string"},"region":{"type":"string"}},"required":["provider"]}"#),
-        ("task_create", "Create a new task/todo item.", r#"{"type":"object","properties":{"title":{"type":"string"},"description":{"type":"string"},"priority":{"type":"string","enum":["low","medium","high","critical"]}},"required":["title"]}"#),
-        ("task_list", "List tasks, optionally filtered by status or priority.", r#"{"type":"object","properties":{"status":{"type":"string"},"priority":{"type":"string"}}}"#),
-        ("task_update", "Update a task's status or details.", r#"{"type":"object","properties":{"id":{"type":"string"},"status":{"type":"string"},"title":{"type":"string"}},"required":["id"]}"#),
-        ("notify_agent", "Send a notification to another agent or the user.", r#"{"type":"object","properties":{"target":{"type":"string"},"message":{"type":"string"}},"required":["target","message"]}"#),
-        ("publish_event", "Publish an event to the event bus for cross-agent communication.", r#"{"type":"object","properties":{"topic":{"type":"string"},"payload":{"type":"object"}},"required":["topic","payload"]}"#),
-        ("mcp_tool", "Call a tool exposed by an MCP server.", r#"{"type":"object","properties":{"server":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"object"}},"required":["server","tool"]}"#),
-        ("log_activity", "Log an activity entry for audit trail.", r#"{"type":"object","properties":{"action":{"type":"string"},"details":{"type":"string"},"severity":{"type":"string","enum":["info","warn","error"]}},"required":["action"]}"#),
+        (
+            "shell",
+            "Execute a shell command. Returns stdout, stderr, and exit code. Use for running builds, tests, system commands.",
+            r#"{"type":"object","properties":{"command":{"type":"string","description":"The shell command to execute"},"timeout":{"type":"integer","description":"Timeout in seconds, default 30"},"working_dir":{"type":"string","description":"Working directory for the command"}},"required":["command"]}"#,
+        ),
+        (
+            "file_read",
+            "Read a file from disk. Returns content as string. Supports line ranges for partial reads of large files.",
+            r#"{"type":"object","properties":{"path":{"type":"string"},"line_start":{"type":"integer"},"line_end":{"type":"integer"}},"required":["path"]}"#,
+        ),
+        (
+            "file_write",
+            "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Use for code generation and edits.",
+            r#"{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}"#,
+        ),
+        (
+            "git_status",
+            "Get the current git status showing staged, unstaged, and untracked files.",
+            r#"{"type":"object","properties":{}}"#,
+        ),
+        (
+            "git_diff",
+            "Show git diff for staged or unstaged changes. Supports path filters.",
+            r#"{"type":"object","properties":{"staged":{"type":"boolean"},"path":{"type":"string"}}}"#,
+        ),
+        (
+            "git_log",
+            "Show git commit log. Configurable count and format.",
+            r#"{"type":"object","properties":{"count":{"type":"integer","default":10},"oneline":{"type":"boolean","default":true}}}"#,
+        ),
+        (
+            "git_commit",
+            "Create a git commit with the given message.",
+            r#"{"type":"object","properties":{"message":{"type":"string"},"all":{"type":"boolean"}},"required":["message"]}"#,
+        ),
+        (
+            "git_branch",
+            "List, create, or switch git branches.",
+            r#"{"type":"object","properties":{"action":{"type":"string","enum":["list","create","checkout"]},"name":{"type":"string"}},"required":["action"]}"#,
+        ),
+        (
+            "memory_store",
+            "Store a key-value pair in the agent's persistent memory for cross-conversation recall.",
+            r#"{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"},"namespace":{"type":"string"}},"required":["key","value"]}"#,
+        ),
+        (
+            "memory_recall",
+            "Recall information from persistent memory by key or semantic search query.",
+            r#"{"type":"object","properties":{"query":{"type":"string"},"namespace":{"type":"string"},"limit":{"type":"integer"}},"required":["query"]}"#,
+        ),
+        (
+            "memory_list",
+            "List all keys in persistent memory, optionally filtered by namespace.",
+            r#"{"type":"object","properties":{"namespace":{"type":"string"}}}"#,
+        ),
+        (
+            "memory_delete",
+            "Delete a key from persistent memory.",
+            r#"{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}"#,
+        ),
+        (
+            "http_request",
+            "Make an HTTP request. Supports GET, POST, PUT, DELETE with headers, body, and auth.",
+            r#"{"type":"object","properties":{"method":{"type":"string","enum":["GET","POST","PUT","DELETE","PATCH"]},"url":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"auth":{"type":"string"}},"required":["method","url"]}"#,
+        ),
+        (
+            "browser_navigate",
+            "Navigate to a URL in the headless browser and return the page content.",
+            r#"{"type":"object","properties":{"url":{"type":"string"},"wait_for":{"type":"string"},"screenshot":{"type":"boolean"}},"required":["url"]}"#,
+        ),
+        (
+            "browser_click",
+            "Click an element on the current page by CSS selector.",
+            r#"{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"]}"#,
+        ),
+        (
+            "browser_extract",
+            "Extract text content from the current page using CSS selectors.",
+            r#"{"type":"object","properties":{"selector":{"type":"string"},"attribute":{"type":"string"}},"required":["selector"]}"#,
+        ),
+        (
+            "web_search",
+            "Search the web and return top results with titles, URLs, and snippets.",
+            r#"{"type":"object","properties":{"query":{"type":"string"},"num_results":{"type":"integer","default":5}},"required":["query"]}"#,
+        ),
+        (
+            "delegate",
+            "Delegate a subtask to a specialized sub-agent with isolated context.",
+            r#"{"type":"object","properties":{"task":{"type":"string"},"agent_type":{"type":"string","enum":["research","code","review"]},"context":{"type":"string"}},"required":["task"]}"#,
+        ),
+        (
+            "sql_query",
+            "Execute a SQL query against the project database. Read-only by default.",
+            r#"{"type":"object","properties":{"query":{"type":"string"},"readonly":{"type":"boolean","default":true}},"required":["query"]}"#,
+        ),
+        (
+            "vision_analyze",
+            "Analyze an image using vision capabilities. Describe, extract text, or answer questions.",
+            r#"{"type":"object","properties":{"image_path":{"type":"string"},"prompt":{"type":"string"}},"required":["image_path","prompt"]}"#,
+        ),
+        (
+            "document_extract",
+            "Extract text from documents (PDF, DOCX, etc.).",
+            r#"{"type":"object","properties":{"path":{"type":"string"},"pages":{"type":"string"}},"required":["path"]}"#,
+        ),
+        (
+            "cloud_costs",
+            "Query cloud infrastructure costs by service, region, or time period.",
+            r#"{"type":"object","properties":{"provider":{"type":"string","enum":["aws","gcp","cloudflare"]},"service":{"type":"string"},"period":{"type":"string"}},"required":["provider"]}"#,
+        ),
+        (
+            "cloud_resources",
+            "List cloud resources (instances, buckets, functions, etc.).",
+            r#"{"type":"object","properties":{"provider":{"type":"string"},"resource_type":{"type":"string"},"region":{"type":"string"}},"required":["provider"]}"#,
+        ),
+        (
+            "task_create",
+            "Create a new task/todo item.",
+            r#"{"type":"object","properties":{"title":{"type":"string"},"description":{"type":"string"},"priority":{"type":"string","enum":["low","medium","high","critical"]}},"required":["title"]}"#,
+        ),
+        (
+            "task_list",
+            "List tasks, optionally filtered by status or priority.",
+            r#"{"type":"object","properties":{"status":{"type":"string"},"priority":{"type":"string"}}}"#,
+        ),
+        (
+            "task_update",
+            "Update a task's status or details.",
+            r#"{"type":"object","properties":{"id":{"type":"string"},"status":{"type":"string"},"title":{"type":"string"}},"required":["id"]}"#,
+        ),
+        (
+            "notify_agent",
+            "Send a notification to another agent or the user.",
+            r#"{"type":"object","properties":{"target":{"type":"string"},"message":{"type":"string"}},"required":["target","message"]}"#,
+        ),
+        (
+            "publish_event",
+            "Publish an event to the event bus for cross-agent communication.",
+            r#"{"type":"object","properties":{"topic":{"type":"string"},"payload":{"type":"object"}},"required":["topic","payload"]}"#,
+        ),
+        (
+            "mcp_tool",
+            "Call a tool exposed by an MCP server.",
+            r#"{"type":"object","properties":{"server":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"object"}},"required":["server","tool"]}"#,
+        ),
+        (
+            "log_activity",
+            "Log an activity entry for audit trail.",
+            r#"{"type":"object","properties":{"action":{"type":"string"},"details":{"type":"string"},"severity":{"type":"string","enum":["info","warn","error"]}},"required":["action"]}"#,
+        ),
     ];
 
     tools_data
@@ -81,7 +201,8 @@ fn realistic_conversation_v2() -> Vec<Message> {
         "ahead": 0,
         "behind": 0,
         "clean": false
-    }).to_string();
+    })
+    .to_string();
 
     let test_output_json = serde_json::json!({
         "stdout": "running 12 tests\ntest tests::health_endpoint ... ok\ntest tests::auth_middleware ... ok\ntest tests::jwt_validation ... ok\ntest tests::token_refresh ... ok\ntest tests::protected_route ... ok\ntest tests::unauthorized_request ... ok\ntest tests::expired_token ... ok\ntest tests::invalid_signature ... ok\ntest tests::rate_limiting ... ok\ntest tests::cors_headers ... ok\ntest tests::content_type_json ... ok\ntest tests::graceful_shutdown ... ok\n\ntest result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s",
@@ -195,19 +316,36 @@ impl distil::Summarizer for MockSummarizer {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 /// Measure token count of a context WITHOUT any distil optimization.
-fn baseline_tokens(messages: &[Message], tools: &[ToolSpec], counter: &dyn distil::TokenCounter) -> usize {
+fn baseline_tokens(
+    messages: &[Message],
+    tools: &[ToolSpec],
+    counter: &dyn distil::TokenCounter,
+) -> usize {
     let msg_tokens: usize = messages.iter().map(|m| counter.count(&m.content)).sum();
     let tool_tokens: usize = tools
         .iter()
-        .map(|t| counter.count(&t.name) + counter.count(&t.description) + counter.count(&t.parameters.to_string()))
+        .map(|t| {
+            counter.count(&t.name)
+                + counter.count(&t.description)
+                + counter.count(&t.parameters.to_string())
+        })
         .sum();
     msg_tokens + tool_tokens
 }
 
 fn count_ctx_tokens(ctx: &Ctx, counter: &dyn distil::TokenCounter) -> usize {
-    ctx.messages.iter().map(|m| counter.count(&m.content)).sum::<usize>()
-        + ctx.tools.iter()
-            .map(|t| counter.count(&t.name) + counter.count(&t.description) + counter.count(&t.parameters.to_string()))
+    ctx.messages
+        .iter()
+        .map(|m| counter.count(&m.content))
+        .sum::<usize>()
+        + ctx
+            .tools
+            .iter()
+            .map(|t| {
+                counter.count(&t.name)
+                    + counter.count(&t.description)
+                    + counter.count(&t.parameters.to_string())
+            })
             .sum::<usize>()
 }
 
@@ -236,7 +374,11 @@ fn full_pipeline_v2_with_all_features() {
                 .retain_turns_assistant(3)
                 .json_truncate(JsonTruncateConfig::default()),
         )
-        .layer(SummarizationLayer::new(MockSummarizer).age_threshold(3).min_content_tokens(20))
+        .layer(
+            SummarizationLayer::new(MockSummarizer)
+                .age_threshold(3)
+                .min_content_tokens(20),
+        )
         .layer(CompactionLayer::new())
         .layer(BudgetLayer::new(32_000).preserve_recent(4))
         .layer(CacheAlignLayer::generic())
@@ -258,8 +400,12 @@ fn full_pipeline_v2_with_all_features() {
         let layer_saved = lr.tokens_saved();
         eprintln!(
             "    {:15} {:>5} → {:>5}  (saved {:>4}, {:>5.1}%)  {}",
-            lr.layer, lr.tokens_before, lr.tokens_after,
-            layer_saved, lr.percentage_saved(), lr.detail
+            lr.layer,
+            lr.tokens_before,
+            lr.tokens_after,
+            layer_saved,
+            lr.percentage_saved(),
+            lr.detail
         );
     }
 
@@ -303,7 +449,11 @@ fn compare_v1_vs_v2_pipeline() {
                 .retain_turns_assistant(3)
                 .json_truncate(JsonTruncateConfig::default()),
         )
-        .layer(SummarizationLayer::new(MockSummarizer).age_threshold(3).min_content_tokens(20))
+        .layer(
+            SummarizationLayer::new(MockSummarizer)
+                .age_threshold(3)
+                .min_content_tokens(20),
+        )
         .layer(CompactionLayer::new())
         .layer(BudgetLayer::new(32_000).preserve_recent(4))
         .layer(CacheAlignLayer::generic())
@@ -322,23 +472,46 @@ fn compare_v1_vs_v2_pipeline() {
     eprintln!("\n══ V1 (old) vs V2 (new) Comparison ═══════════════════════");
     eprintln!("  Baseline (no distil): {:>6} tokens", baseline);
     eprintln!();
-    eprintln!("  V1 (old pipeline)  : {:>6} tokens  ({:.1}% saved)", after_v1, pct_v1);
+    eprintln!(
+        "  V1 (old pipeline)  : {:>6} tokens  ({:.1}% saved)",
+        after_v1, pct_v1
+    );
     for lr in &result_v1.layers {
         if lr.tokens_saved() > 0 {
-            eprintln!("    {:15} {:>5} → {:>5}  (saved {:>4})", lr.layer, lr.tokens_before, lr.tokens_after, lr.tokens_saved());
+            eprintln!(
+                "    {:15} {:>5} → {:>5}  (saved {:>4})",
+                lr.layer,
+                lr.tokens_before,
+                lr.tokens_after,
+                lr.tokens_saved()
+            );
         }
     }
     eprintln!();
-    eprintln!("  V2 (new pipeline)  : {:>6} tokens  ({:.1}% saved)", after_v2, pct_v2);
+    eprintln!(
+        "  V2 (new pipeline)  : {:>6} tokens  ({:.1}% saved)",
+        after_v2, pct_v2
+    );
     for lr in &result_v2.layers {
         if lr.tokens_saved() > 0 {
-            eprintln!("    {:15} {:>5} → {:>5}  (saved {:>4})", lr.layer, lr.tokens_before, lr.tokens_after, lr.tokens_saved());
+            eprintln!(
+                "    {:15} {:>5} → {:>5}  (saved {:>4})",
+                lr.layer,
+                lr.tokens_before,
+                lr.tokens_after,
+                lr.tokens_saved()
+            );
         }
     }
     eprintln!();
     eprintln!("  ── New features impact ──");
     eprintln!("  V2 saves {:>4} MORE tokens than V1", improvement);
-    eprintln!("  V2 saves {:.1}% vs V1's {:.1}%  (+{:.1} percentage points)", pct_v2, pct_v1, pct_v2 - pct_v1);
+    eprintln!(
+        "  V2 saves {:.1}% vs V1's {:.1}%  (+{:.1} percentage points)",
+        pct_v2,
+        pct_v1,
+        pct_v2 - pct_v1
+    );
 
     assert!(
         after_v2 < after_v1,
@@ -359,23 +532,44 @@ fn json_truncation_saves_tokens_on_json_tool_results() {
     let result_plain = masker_plain.apply(&mut ctx_plain, &counter);
 
     // With JSON truncation
-    let masker_json = MaskingLayer::new().retain_turns(1).json_truncate(JsonTruncateConfig::default());
+    let masker_json = MaskingLayer::new()
+        .retain_turns(1)
+        .json_truncate(JsonTruncateConfig::default());
     let mut ctx_json = Ctx::new(messages, vec![], 6);
     let result_json = masker_json.apply(&mut ctx_json, &counter);
 
     eprintln!("\n══ JSON Truncation Impact ═══════════════════════════════");
-    eprintln!("  Without JSON truncation: {} → {} (saved {})", result_plain.tokens_before, result_plain.tokens_after, result_plain.tokens_saved());
-    eprintln!("  With JSON truncation   : {} → {} (saved {})", result_json.tokens_before, result_json.tokens_after, result_json.tokens_saved());
+    eprintln!(
+        "  Without JSON truncation: {} → {} (saved {})",
+        result_plain.tokens_before,
+        result_plain.tokens_after,
+        result_plain.tokens_saved()
+    );
+    eprintln!(
+        "  With JSON truncation   : {} → {} (saved {})",
+        result_json.tokens_before,
+        result_json.tokens_after,
+        result_json.tokens_saved()
+    );
 
     // With JSON truncation, we preserve structure so the masked result is bigger
     // than fully masked, BUT the tool results that get JSON-truncated retain semantic
     // value. The key assertion: both approaches save tokens, JSON truncation
     // preserves more information.
-    assert!(result_plain.tokens_saved() > 0, "plain masking should save tokens");
-    assert!(result_json.tokens_saved() > 0, "JSON truncation should save tokens");
+    assert!(
+        result_plain.tokens_saved() > 0,
+        "plain masking should save tokens"
+    );
+    assert!(
+        result_json.tokens_saved() > 0,
+        "JSON truncation should save tokens"
+    );
 
     // Verify JSON structure is preserved in truncated results
-    let has_json_truncated = ctx_json.messages.iter().any(|m| m.content.contains("json truncated") || m.content.contains("stdout"));
+    let has_json_truncated = ctx_json
+        .messages
+        .iter()
+        .any(|m| m.content.contains("json truncated") || m.content.contains("stdout"));
     eprintln!("  JSON structure preserved: {}", has_json_truncated);
 }
 
@@ -399,14 +593,30 @@ fn observation_history_split_masks_tool_earlier() {
     let result_split = masker_split.apply(&mut ctx_split, &counter);
 
     eprintln!("\n══ Observation/History Split Impact ═════════════════════");
-    eprintln!("  Unified retention  : {} → {} (saved {})", result_unified.tokens_before, result_unified.tokens_after, result_unified.tokens_saved());
-    eprintln!("  Split retention    : {} → {} (saved {})", result_split.tokens_before, result_split.tokens_after, result_split.tokens_saved());
-    eprintln!("  Extra savings      : {} tokens", result_split.tokens_saved().saturating_sub(result_unified.tokens_saved()));
+    eprintln!(
+        "  Unified retention  : {} → {} (saved {})",
+        result_unified.tokens_before,
+        result_unified.tokens_after,
+        result_unified.tokens_saved()
+    );
+    eprintln!(
+        "  Split retention    : {} → {} (saved {})",
+        result_split.tokens_before,
+        result_split.tokens_after,
+        result_split.tokens_saved()
+    );
+    eprintln!(
+        "  Extra savings      : {} tokens",
+        result_split
+            .tokens_saved()
+            .saturating_sub(result_unified.tokens_saved())
+    );
 
     assert!(
         result_split.tokens_saved() >= result_unified.tokens_saved(),
         "split retention should save at least as much (split={}, unified={})",
-        result_split.tokens_saved(), result_unified.tokens_saved()
+        result_split.tokens_saved(),
+        result_unified.tokens_saved()
     );
 }
 
@@ -427,13 +637,24 @@ fn summarization_layer_compresses_old_turns() {
     eprintln!("\n══ Summarization Layer Impact ═══════════════════════════");
     eprintln!("  Before : {} tokens", tokens_before);
     eprintln!("  After  : {} tokens", tokens_after);
-    eprintln!("  Saved  : {} tokens ({:.1}%)", result.tokens_saved(), result.percentage_saved());
+    eprintln!(
+        "  Saved  : {} tokens ({:.1}%)",
+        result.tokens_saved(),
+        result.percentage_saved()
+    );
     eprintln!("  Detail : {}", result.detail);
 
     // Verify summary was injected
-    let has_summary = ctx.messages.iter().any(|m| m.content.contains("## Conversation Summary"));
+    let has_summary = ctx
+        .messages
+        .iter()
+        .any(|m| m.content.contains("## Conversation Summary"));
     assert!(has_summary, "should have summary message");
-    assert!(result.tokens_saved() > 0, "should save tokens: {}", result.detail);
+    assert!(
+        result.tokens_saved() > 0,
+        "should save tokens: {}",
+        result.detail
+    );
 }
 
 // ── Backward compat: old tests still pass ────────────────────────────────────
@@ -442,8 +663,14 @@ fn summarization_layer_compresses_old_turns() {
 fn scratchpad_survives_pipeline() {
     let counter = EstimateCounter;
     let pad = ScratchpadLayer::new();
-    pad.set("plan".into(), "1. Add auth 2. Add rate limiting 3. Deploy".into());
-    pad.set("blockers".into(), "Need to update the CORS config first".into());
+    pad.set(
+        "plan".into(),
+        "1. Add auth 2. Add rate limiting 3. Deploy".into(),
+    );
+    pad.set(
+        "blockers".into(),
+        "Need to update the CORS config first".into(),
+    );
 
     let pipeline = Pipeline::builder()
         .counter(counter)
@@ -477,10 +704,7 @@ fn scratchpad_survives_pipeline() {
     );
     assert!(write_result.is_some());
 
-    let read_result = pipeline.handle_tool_call(
-        "note_read",
-        &serde_json::json!({"key": "status"}),
-    );
+    let read_result = pipeline.handle_tool_call("note_read", &serde_json::json!({"key": "status"}));
     assert_eq!(read_result.unwrap(), "auth module complete");
 }
 
@@ -513,37 +737,63 @@ fn tool_search_detail_levels_in_pipeline() {
         .build();
 
     // Default (no detail param) returns full schemas
-    let full = pipeline.handle_tool_call(
-        "tool_search",
-        &serde_json::json!({"query": "file"}),
-    ).unwrap();
-    assert!(full.contains("Parameters:"), "default should return full schemas: {full}");
+    let full = pipeline
+        .handle_tool_call("tool_search", &serde_json::json!({"query": "file"}))
+        .unwrap();
+    assert!(
+        full.contains("Parameters:"),
+        "default should return full schemas: {full}"
+    );
 
     // Explicit full
-    let full_explicit = pipeline.handle_tool_call(
-        "tool_search",
-        &serde_json::json!({"query": "file", "detail": "full"}),
-    ).unwrap();
-    assert!(full_explicit.contains("Parameters:"), "explicit full should have schemas");
+    let full_explicit = pipeline
+        .handle_tool_call(
+            "tool_search",
+            &serde_json::json!({"query": "file", "detail": "full"}),
+        )
+        .unwrap();
+    assert!(
+        full_explicit.contains("Parameters:"),
+        "explicit full should have schemas"
+    );
 
     // Brief — names + descriptions, no schemas
-    let brief = pipeline.handle_tool_call(
-        "tool_search",
-        &serde_json::json!({"query": "file", "detail": "brief"}),
-    ).unwrap();
+    let brief = pipeline
+        .handle_tool_call(
+            "tool_search",
+            &serde_json::json!({"query": "file", "detail": "brief"}),
+        )
+        .unwrap();
     assert!(brief.contains("file_read"), "brief should list file_read");
-    assert!(!brief.contains("Parameters:"), "brief should NOT have schemas: {brief}");
+    assert!(
+        !brief.contains("Parameters:"),
+        "brief should NOT have schemas: {brief}"
+    );
 
     // Name only — just names
-    let name_only = pipeline.handle_tool_call(
-        "tool_search",
-        &serde_json::json!({"query": "file", "detail": "name_only"}),
-    ).unwrap();
-    assert!(name_only.contains("file_read"), "name_only should list file_read");
-    assert!(name_only.contains("file_write"), "name_only should list file_write");
-    assert!(!name_only.contains("Parameters:"), "name_only should NOT have schemas");
+    let name_only = pipeline
+        .handle_tool_call(
+            "tool_search",
+            &serde_json::json!({"query": "file", "detail": "name_only"}),
+        )
+        .unwrap();
+    assert!(
+        name_only.contains("file_read"),
+        "name_only should list file_read"
+    );
+    assert!(
+        name_only.contains("file_write"),
+        "name_only should list file_write"
+    );
+    assert!(
+        !name_only.contains("Parameters:"),
+        "name_only should NOT have schemas"
+    );
     // name_only is a single line, not multi-line tool blocks
-    assert!(!name_only.contains('\n'), "name_only should be a single line: {name_only}");
+    assert!(
+        !name_only.contains('\n'),
+        "name_only should be a single line: {name_only}"
+    );
 
     // Progressive disclosure saves tokens
     let name_tokens = counter.count(&name_only);
@@ -566,11 +816,16 @@ fn tool_search_no_match_returns_helpful_message() {
         .build();
 
     // No matches — should work regardless of detail level
-    let result = pipeline.handle_tool_call(
-        "tool_search",
-        &serde_json::json!({"query": "xyznonexistent", "detail": "name_only"}),
-    ).unwrap();
-    assert!(result.contains("No tools found"), "should indicate no match: {result}");
+    let result = pipeline
+        .handle_tool_call(
+            "tool_search",
+            &serde_json::json!({"query": "xyznonexistent", "detail": "name_only"}),
+        )
+        .unwrap();
+    assert!(
+        result.contains("No tools found"),
+        "should indicate no match: {result}"
+    );
 }
 
 #[test]
@@ -579,7 +834,10 @@ fn default_summarizer_prompt_is_exported() {
     let prompt = distil::DEFAULT_SUMMARIZER_SYSTEM_PROMPT;
     assert!(prompt.contains("PRESERVE"), "should have preserve section");
     assert!(prompt.contains("DISCARD"), "should have discard section");
-    assert!(prompt.contains("Architectural decisions"), "should mention architectural decisions");
+    assert!(
+        prompt.contains("Architectural decisions"),
+        "should mention architectural decisions"
+    );
     assert!(prompt.contains("File paths"), "should mention file paths");
 }
 
@@ -600,7 +858,11 @@ fn compare_v1_vs_v2_tiktoken() {
                 .retain_turns_tool(1)
                 .retain_turns_assistant(3),
         )
-        .layer(SummarizationLayer::new(MockSummarizer).age_threshold(3).min_content_tokens(20))
+        .layer(
+            SummarizationLayer::new(MockSummarizer)
+                .age_threshold(3)
+                .min_content_tokens(20),
+        )
         .layer(CompactionLayer::new())
         .layer(BudgetLayer::new(32_000).preserve_recent(4))
         .layer(CacheAlignLayer::generic())
@@ -616,7 +878,10 @@ fn compare_v1_vs_v2_tiktoken() {
     eprintln!("  After   : {} tokens", after);
     eprintln!("  Saved   : {:.1}%", pct);
 
-    assert!(pct > 50.0, "V2 should save >50% with tiktoken, got {pct:.1}%");
+    assert!(
+        pct > 50.0,
+        "V2 should save >50% with tiktoken, got {pct:.1}%"
+    );
 }
 
 // ── Real LLM summarizer test ─────────────────────────────────────────────────
@@ -683,7 +948,11 @@ fn full_pipeline_real_llm_summarizer() {
                 .retain_turns_assistant(3)
                 .json_truncate(JsonTruncateConfig::default()),
         )
-        .layer(SummarizationLayer::new(summarizer).age_threshold(3).min_content_tokens(20))
+        .layer(
+            SummarizationLayer::new(summarizer)
+                .age_threshold(3)
+                .min_content_tokens(20),
+        )
         .layer(CompactionLayer::new())
         .layer(BudgetLayer::new(32_000).preserve_recent(4))
         .layer(CacheAlignLayer::generic())
@@ -704,13 +973,20 @@ fn full_pipeline_real_llm_summarizer() {
         let layer_saved = lr.tokens_saved();
         eprintln!(
             "    {:15} {:>5} → {:>5}  (saved {:>4}, {:>5.1}%)  {}",
-            lr.layer, lr.tokens_before, lr.tokens_after,
-            layer_saved, lr.percentage_saved(), lr.detail
+            lr.layer,
+            lr.tokens_before,
+            lr.tokens_after,
+            layer_saved,
+            lr.percentage_saved(),
+            lr.detail
         );
     }
 
     // Find the summary message to show what the LLM actually produced
-    let summary_msg = ctx.messages.iter().find(|m| m.content.contains("## Conversation Summary"));
+    let summary_msg = ctx
+        .messages
+        .iter()
+        .find(|m| m.content.contains("## Conversation Summary"));
     if let Some(msg) = summary_msg {
         eprintln!("\n  ── LLM Summary ──");
         eprintln!("  {}", msg.content);
