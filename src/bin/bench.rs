@@ -38,6 +38,10 @@ struct Totals {
     by_tool: HashMap<String, u64>,
     /// Tool-result occurrences, keyed by tool name.
     calls_by_tool: HashMap<String, u64>,
+    /// Local token count of tool OUTPUT, keyed by tool name. This is the large
+    /// half: arguments are a request, results are a payload.
+    result_by_tool: HashMap<String, u64>,
+    result_calls_by_tool: HashMap<String, u64>,
     billed: TurnUsage,
     sessions: u64,
     /// Sessions holding at least one assistant turn.
@@ -65,6 +69,12 @@ impl Totals {
         for (k, v) in other.calls_by_tool {
             *self.calls_by_tool.entry(k).or_insert(0) += v;
         }
+        for (k, v) in other.result_by_tool {
+            *self.result_by_tool.entry(k).or_insert(0) += v;
+        }
+        for (k, v) in other.result_calls_by_tool {
+            *self.result_calls_by_tool.entry(k).or_insert(0) += v;
+        }
         self.billed.input += other.billed.input;
         self.billed.cache_creation += other.billed.cache_creation;
         self.billed.cache_read += other.billed.cache_read;
@@ -85,7 +95,17 @@ impl Totals {
     }
 }
 
-fn measure_one(path: &Path, counter: &dyn TokenCounter) -> Totals {
+/// Measure one session. `split_prefix` marks the session as belonging to the
+/// treatment group when any tool it CALLED starts with that prefix.
+///
+/// Matching on calls, not on text, is deliberate: a tool name also appears in
+/// system reminders and prose, so a grep over the file finds sessions that
+/// merely had the tool available. Availability is not use.
+fn measure_one(
+    path: &Path,
+    counter: &dyn TokenCounter,
+    split_prefix: Option<&str>,
+) -> (Totals, bool) {
     let mut t = Totals {
         sessions: 1,
         ..Default::default()
@@ -93,8 +113,9 @@ fn measure_one(path: &Path, counter: &dyn TokenCounter) -> Totals {
     let session = match load_session(path) {
         Ok(s) => s,
         // An unreadable file is skipped rather than aborting a 13,000-file run.
-        Err(_) => return t,
+        Err(_) => return (t, false),
     };
+    let mut used = false;
 
     t.malformed_lines = session.malformed_lines as u64;
     t.assistant_turns = session.assistant_turns as u64;
@@ -118,8 +139,19 @@ fn measure_one(path: &Path, counter: &dyn TokenCounter) -> Totals {
 
         if seg.kind == SegmentKind::ToolUse {
             if let Some(name) = &seg.tool {
+                if let Some(pfx) = split_prefix {
+                    if name.starts_with(pfx) {
+                        used = true;
+                    }
+                }
                 *t.by_tool.entry(name.clone()).or_insert(0) += tokens;
                 *t.calls_by_tool.entry(name.clone()).or_insert(0) += 1;
+            }
+        }
+        if seg.kind == SegmentKind::ToolResult {
+            if let Some(name) = &seg.tool {
+                *t.result_by_tool.entry(name.clone()).or_insert(0) += tokens;
+                *t.result_calls_by_tool.entry(name.clone()).or_insert(0) += 1;
             }
         }
     }
@@ -127,7 +159,7 @@ fn measure_one(path: &Path, counter: &dyn TokenCounter) -> Totals {
     if session.assistant_turns > 0 {
         t.session_turns.push(session.assistant_turns as u64);
     }
-    t
+    (t, used)
 }
 
 fn pct(part: u64, whole: u64) -> f64 {
@@ -162,6 +194,16 @@ fn main() {
     let limit: Option<usize> = flag("--limit").and_then(|v| v.parse().ok());
     let json_out = flag("--json");
     let model = flag("--model").unwrap_or_else(|| "claude-opus-4".to_string());
+    let split_by = flag("--split-by-tool");
+    // Export real tool results so external compressors can be run on the same
+    // input. A compressor benchmarked on its own fixtures proves nothing.
+    let export = flag("--export-payloads");
+    let export_sessions = flag("--export-sessions");
+    let min_turns: usize = flag("--min-turns").and_then(|v| v.parse().ok()).unwrap_or(40);
+    let max_sessions: usize = flag("--max-sessions").and_then(|v| v.parse().ok()).unwrap_or(60);
+    let per_tool_cap: usize = flag("--per-tool")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(400);
 
     let mut files = match find_transcripts(&root) {
         Ok(f) => f,
@@ -185,17 +227,37 @@ fn main() {
     let done = AtomicUsize::new(0);
     let step = (files.len() / 20).max(1);
 
-    let totals = files
+    let measured: Vec<(Totals, bool)> = files
         .par_iter()
         .map(|p| {
-            let t = measure_one(p, counter.as_ref());
+            let t = measure_one(p, counter.as_ref(), split_by.as_deref());
             let n = done.fetch_add(1, Ordering::Relaxed) + 1;
             if n % step == 0 {
                 eprintln!("  {n}/{} sessions", files.len());
             }
             t
         })
-        .reduce(Totals::default, Totals::merge);
+        .collect();
+
+    if let Some(pfx) = &split_by {
+        report_split(&measured, pfx);
+        return;
+    }
+
+    if let Some(out) = &export {
+        export_payloads(&files, counter.as_ref(), out, per_tool_cap);
+        return;
+    }
+
+    if let Some(dir) = &export_sessions {
+        export_sessions_to(&files, dir, min_turns, max_sessions);
+        return;
+    }
+
+    let totals = measured
+        .into_iter()
+        .map(|(t, _)| t)
+        .fold(Totals::default(), Totals::merge);
 
     let local = totals.local_total();
     let billed_in = totals.billed.input_total();
@@ -335,16 +397,23 @@ fn main() {
     println!("of the history merely to break even on price, before any quality loss.");
     println!("Compression is therefore a bet on the conversation continuing.");
 
-    println!("\n=== top tools by tool_use argument tokens ===");
-    let mut tools: Vec<_> = totals.by_tool.iter().collect();
-    tools.sort_by_key(|(_, v)| std::cmp::Reverse(**v));
-    println!("{:<28} {:>14} {:>10}", "tool", "arg tokens", "calls");
-    for (name, tok) in tools.iter().take(15) {
+    println!("\n=== top tools by RESULT tokens (what the tool put in context) ===");
+    let mut rtools: Vec<_> = totals.result_by_tool.iter().collect();
+    rtools.sort_by_key(|(_, v)| std::cmp::Reverse(**v));
+    let result_total: u64 = totals.result_by_tool.values().sum();
+    println!(
+        "{:<34} {:>14} {:>8} {:>10} {:>10}",
+        "tool", "result tokens", "share", "calls", "per call"
+    );
+    for (name, tok) in rtools.iter().take(18) {
+        let calls = *totals.result_calls_by_tool.get(*name).unwrap_or(&0);
         println!(
-            "{:<28} {:>14} {:>10}",
+            "{:<34} {:>14} {:>7.1}% {:>10} {:>10}",
             name,
             tok,
-            totals.calls_by_tool.get(*name).unwrap_or(&0)
+            pct(**tok, result_total),
+            calls,
+            if calls > 0 { **tok / calls } else { 0 }
         );
     }
 
@@ -437,4 +506,262 @@ fn main() {
             Err(e) => eprintln!("\ncannot write {path}: {e}"),
         }
     }
+}
+
+/// Compare sessions that CALLED a tool against those that did not.
+///
+/// This is observational, not a randomised trial. Sessions reach for a tool
+/// because of what they are doing, so a difference between the groups is not
+/// by itself an effect of the tool. Two guards are applied and both are
+/// reported: figures are normalised per assistant turn rather than per session,
+/// and the groups are also compared inside matched turn-count bands, because
+/// session length is the confounder that swamps everything else.
+fn report_split(measured: &[(Totals, bool)], prefix: &str) {
+    let fold = |want: bool| -> Totals {
+        measured
+            .iter()
+            .filter(|(t, used)| *used == want && t.assistant_turns > 0)
+            .map(|(t, _)| t.clone())
+            .fold(Totals::default(), Totals::merge)
+    };
+    let with = fold(true);
+    let without = fold(false);
+
+    println!("\n=== A/B split on tool prefix `{prefix}` ===");
+    println!("Grouped by whether the session actually CALLED a matching tool.");
+    println!(
+        "\n{:<26} {:>16} {:>16} {:>10}",
+        "metric", "with", "without", "delta"
+    );
+
+    let row = |label: &str, a: f64, b: f64| {
+        let delta = if b.abs() > f64::EPSILON {
+            (a - b) / b * 100.0
+        } else {
+            0.0
+        };
+        println!("{label:<26} {a:>16.1} {b:>16.1} {delta:>9.1}%");
+    };
+
+    let per_turn = |t: &Totals, key: &str| -> f64 {
+        if t.assistant_turns == 0 {
+            return 0.0;
+        }
+        *t.by_kind.get(key).unwrap_or(&0) as f64 / t.assistant_turns as f64
+    };
+
+    println!("sessions                   {:>16} {:>16}", 
+        with.session_turns.len(), without.session_turns.len());
+    println!("assistant turns            {:>16} {:>16}",
+        with.assistant_turns, without.assistant_turns);
+
+    row("tool_result tok/turn", per_turn(&with, "tool_result"), per_turn(&without, "tool_result"));
+    row("tool_use tok/turn", per_turn(&with, "tool_use"), per_turn(&without, "tool_use"));
+    row("assistant_text tok/turn", per_turn(&with, "assistant_text"), per_turn(&without, "assistant_text"));
+    row(
+        "all text tok/turn",
+        with.local_total() as f64 / with.assistant_turns.max(1) as f64,
+        without.local_total() as f64 / without.assistant_turns.max(1) as f64,
+    );
+    row(
+        "billed input units/turn",
+        with.billed.billable_input_units() / with.assistant_turns.max(1) as f64,
+        without.billed.billable_input_units() / without.assistant_turns.max(1) as f64,
+    );
+    row(
+        "output tok/turn",
+        with.billed.output as f64 / with.assistant_turns.max(1) as f64,
+        without.billed.output as f64 / without.assistant_turns.max(1) as f64,
+    );
+
+    // Session length is the dominant confounder: long sessions carry more
+    // history per turn regardless of which tools they used. Comparing inside
+    // bands holds it roughly fixed.
+    println!("\n--- same comparison inside matched session-length bands ---");
+    println!(
+        "{:<18} {:>10} {:>10} {:>14} {:>14} {:>9}",
+        "turns band", "n with", "n without", "with tok/turn", "w/o tok/turn", "delta"
+    );
+    for (label, lo, hi) in [
+        ("1-9", 1u64, 9u64),
+        ("10-49", 10, 49),
+        ("50-199", 50, 199),
+        ("200+", 200, u64::MAX),
+    ] {
+        let band = |want: bool| -> (usize, f64) {
+            let sel: Vec<&Totals> = measured
+                .iter()
+                .filter(|(t, used)| {
+                    *used == want
+                        && t.assistant_turns >= lo
+                        && t.assistant_turns <= hi
+                })
+                .map(|(t, _)| t)
+                .collect();
+            let turns: u64 = sel.iter().map(|t| t.assistant_turns).sum();
+            let toks: u64 = sel.iter().map(|t| t.local_total()).sum();
+            (
+                sel.len(),
+                if turns > 0 {
+                    toks as f64 / turns as f64
+                } else {
+                    0.0
+                },
+            )
+        };
+        let (nw, tw) = band(true);
+        let (no, to) = band(false);
+        let delta = if to.abs() > f64::EPSILON {
+            (tw - to) / to * 100.0
+        } else {
+            0.0
+        };
+        println!("{label:<18} {nw:>10} {no:>10} {tw:>14.1} {to:>14.1} {delta:>8.1}%");
+    }
+
+    println!("\n--- what the tool itself put in context ---");
+    let mut rt: Vec<_> = with.result_by_tool.iter().collect();
+    rt.sort_by_key(|(_, v)| std::cmp::Reverse(**v));
+    println!("{:<34} {:>14} {:>10} {:>10}", "tool", "result tokens", "calls", "per call");
+    for (name, tok) in rt.iter().take(12) {
+        let calls = *with.result_calls_by_tool.get(*name).unwrap_or(&0);
+        println!(
+            "{:<34} {:>14} {:>10} {:>10}",
+            name, tok, calls,
+            if calls > 0 { **tok / calls } else { 0 }
+        );
+    }
+}
+
+/// Write real tool-result payloads to JSONL so external compressors can run on
+/// the same input this crate measured.
+///
+/// The sample is stratified: at most `cap` payloads per tool. Tool output is
+/// extremely skewed — `Read` alone is most of the corpus — and an unstratified
+/// sample would measure one tool while claiming to measure the corpus. The true
+/// population weight of each tool is written alongside, so a result can be
+/// reweighted back to corpus proportions instead of reported as a raw mean.
+fn export_payloads(
+    files: &[PathBuf],
+    counter: &dyn TokenCounter,
+    out_path: &str,
+    cap: usize,
+) {
+    use std::io::Write;
+
+    // Population totals first, so weights are exact rather than estimated.
+    let pop: HashMap<String, (u64, u64)> = files
+        .par_iter()
+        .map(|p| {
+            let mut m: HashMap<String, (u64, u64)> = HashMap::new();
+            if let Ok(s) = load_session(p) {
+                for seg in &s.segments {
+                    if seg.kind != SegmentKind::ToolResult {
+                        continue;
+                    }
+                    if let Some(t) = &seg.tool {
+                        let e = m.entry(t.clone()).or_insert((0, 0));
+                        e.0 += counter.count(&seg.text) as u64;
+                        e.1 += 1;
+                    }
+                }
+            }
+            m
+        })
+        .reduce(HashMap::new, |mut a, b| {
+            for (k, (tok, n)) in b {
+                let e = a.entry(k).or_insert((0, 0));
+                e.0 += tok;
+                e.1 += n;
+            }
+            a
+        });
+
+    let mut file = match std::fs::File::create(out_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("cannot write {out_path}: {e}");
+            return;
+        }
+    };
+
+    let mut taken: HashMap<String, usize> = HashMap::new();
+    let mut written = 0usize;
+    // Sequential so the per-tool cap is deterministic and reproducible.
+    for p in files {
+        let s = match load_session(p) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        for seg in &s.segments {
+            if seg.kind != SegmentKind::ToolResult || seg.text.is_empty() {
+                continue;
+            }
+            let tool = match &seg.tool {
+                Some(t) => t.clone(),
+                None => continue,
+            };
+            let c = taken.entry(tool.clone()).or_insert(0);
+            if *c >= cap {
+                continue;
+            }
+            *c += 1;
+            let (pop_tokens, pop_calls) =
+                pop.get(&tool).copied().unwrap_or((0, 0));
+            let rec = serde_json::json!({
+                "tool": tool,
+                "tokens": counter.count(&seg.text),
+                "text": seg.text,
+                "pop_tokens": pop_tokens,
+                "pop_calls": pop_calls,
+            });
+            if writeln!(file, "{rec}").is_err() {
+                eprintln!("write failed at record {written}");
+                return;
+            }
+            written += 1;
+        }
+    }
+    eprintln!("exported {written} payloads across {} tools to {out_path}", taken.len());
+}
+
+/// Write whole sessions as Anthropic-format message arrays.
+///
+/// A context compressor is a function of the WHOLE conversation, not of one
+/// payload. Headroom protects the last four messages and skips anything under
+/// its minimum size; RTK acts at capture time. Feeding either an isolated
+/// payload measures the harness, not the tool. Only sessions long enough to
+/// have a compressible prefix are written.
+fn export_sessions_to(files: &[PathBuf], dir: &str, min_turns: usize, max_sessions: usize) {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("cannot create {dir}: {e}");
+        return;
+    }
+    let mut written = 0usize;
+    for p in files {
+        if written >= max_sessions {
+            break;
+        }
+        let s = match load_session(p) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if s.assistant_turns < min_turns || s.raw_messages.is_empty() {
+            continue;
+        }
+        let name = p
+            .file_stem()
+            .and_then(|x| x.to_str())
+            .unwrap_or("session")
+            .to_string();
+        let out = format!("{dir}/{name}.json");
+        let body = match serde_json::to_string(&s.raw_messages) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        if std::fs::write(&out, body).is_ok() {
+            written += 1;
+        }
+    }
+    eprintln!("exported {written} sessions with >= {min_turns} assistant turns to {dir}");
 }

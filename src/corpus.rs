@@ -123,6 +123,12 @@ pub struct Session {
     pub assistant_turns: usize,
     /// Lines that were not valid JSON. Non-zero means a truncated write.
     pub malformed_lines: usize,
+    /// The `message` objects exactly as recorded, in order.
+    ///
+    /// Kept verbatim rather than rebuilt from `segments`, because an external
+    /// compressor routes on message role and block structure. Reconstructing
+    /// that from a flattened segment list would benchmark the reconstruction.
+    pub raw_messages: Vec<serde_json::Value>,
 }
 
 impl Session {
@@ -218,9 +224,15 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
     let reader = BufReader::new(file);
 
     let mut segments = Vec::new();
+    // tool_use_id -> tool name, so a result can be attributed to its tool.
+    // A call always precedes its result in the file, so one forward pass is
+    // enough and no second read is needed.
+    let mut tool_use_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     let mut usage = Vec::new();
     let mut assistant_turns = 0usize;
     let mut malformed_lines = 0usize;
+    let mut raw_messages: Vec<serde_json::Value> = Vec::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -254,6 +266,12 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
             _ => continue,
         };
         let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Keep only what the wire format carries; `usage` and harness fields
+        // are not part of a request and would distort a token measurement.
+        if let Some(c) = msg.get("content") {
+            raw_messages.push(serde_json::json!({ "role": role, "content": c }));
+        }
 
         if role == "assistant" {
             assistant_turns += 1;
@@ -340,6 +358,9 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
                                 .get("input")
                                 .map(|v| v.to_string())
                                 .unwrap_or_else(|| "{}".to_string());
+                            if let Some(id) = b.get("id").and_then(|v| v.as_str()) {
+                                tool_use_names.insert(id.to_string(), name.clone());
+                            }
                             segments.push(Segment {
                                 kind: SegmentKind::ToolUse,
                                 text: args,
@@ -347,10 +368,15 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
                             });
                         }
                         "tool_result" => {
+                            // A result names only the id of the call it answers.
+                            // Resolving it back to the tool name is what makes
+                            // "which tool's OUTPUT costs the most" answerable —
+                            // and output dwarfs arguments, so the unresolved
+                            // form attributes the small half and drops the big.
                             let tool = b
                                 .get("tool_use_id")
                                 .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
+                                .and_then(|id| tool_use_names.get(id).cloned());
                             if let Some(c) = b.get("content") {
                                 tool_result_segments(c, tool, &mut segments);
                             }
@@ -369,6 +395,7 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
         usage,
         assistant_turns,
         malformed_lines,
+        raw_messages,
     })
 }
 
@@ -532,5 +559,36 @@ mod pricing_tests {
             cache_write_1h: 0,
         };
         assert!((u.billable_input_units() - 100.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod attribution_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn tool_results_resolve_back_to_their_tool_name() {
+        // Output is far larger than arguments, so a result that cannot name its
+        // tool leaves the expensive half of the corpus unattributed.
+        let body = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Read","input":{"file":"a.rs"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"fn main() {}"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_missing","content":"orphan"}]}}
+"#;
+        let mut p = std::env::temp_dir();
+        p.push("distil-corpus-test-attrib.jsonl");
+        File::create(&p).unwrap().write_all(body.as_bytes()).unwrap();
+        let s = load_session(&p).unwrap();
+
+        let results: Vec<_> = s
+            .segments
+            .iter()
+            .filter(|x| x.kind == SegmentKind::ToolResult)
+            .collect();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].tool.as_deref(), Some("Read"));
+        // An unmatched id stays None rather than being invented.
+        assert_eq!(results[1].tool, None);
+        std::fs::remove_file(&p).ok();
     }
 }
