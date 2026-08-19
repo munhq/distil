@@ -1,0 +1,21 @@
+--- Headroom 0.35.0, compress_user_messages=True ---
+0e6b9fd8-867 msgs=92       11128->10846    saved=  2.5%  first_edit=26       0.6s
+26767d88-480 msgs=101      24110->23975    saved=  0.6%  first_edit=51       2.3s
+662c7263-5fa msgs=78       29641->18577    saved= 37.3%  first_edit=5        0.1s
+3dc3748a-0a0 msgs=71       30535->23917    saved= 21.7%  first_edit=5        0.3s
+26d97465-050 msgs=99       37101->31497    saved= 15.1%  first_edit=10       0.7s
+3d9d7314-6ec msgs=100      42329->30098    saved= 28.9%  first_edit=5        0.4s
+04fb35a8-90a msgs=306      63962->62250    saved=  2.7%  first_edit=38       1.3s
+69011dd9-f16 msgs=145      86490->82257    saved=  4.9%  first_edit=23       0.4s
+14871816-a7a msgs=203     122071->107322   saved= 12.1%  first_edit=3       32.6s
+40a76c05-221 msgs=306     125690->106792   saved= 15.0%  first_edit=0       23.7s
+0d9f0a8d-694 msgs=461     253915->240994   saved=  5.1%  first_edit=39      58.7s
+1665811b-b82 msgs=421     286076->284069   saved=  0.7%  first_edit=69      99.6s
+
+TOTAL 1,113,048 -> 1,022,594  saved 8.1%   modified 12/12 sessions
+cached prefix surviving: 14.9% of tokens
+invalidated tail shrank to 90.5% of its size
+   10 turns remaining: break-even 46.5% -> LOSES
+   20 turns remaining: break-even 63.5% -> LOSES
+   50 turns remaining: break-even 81.3% -> LOSES
+first edit at median 10% through the conversation

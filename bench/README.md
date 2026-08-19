@@ -61,3 +61,30 @@ trustworthy comparison and this script as a bound.
    sessions; only 28 ever called one. Availability is not use.
 4. Report what a tool does by default AND with its limits unlocked. Either alone
    misleads in a different direction.
+
+## Measured result — Headroom 0.35.0 on 12 real sessions
+
+| config | tokens | saved | sessions modified | prefix surviving | tail shrank to |
+|---|---|---|---|---|---|
+| default | 1,113,048 → 1,023,876 | 8.0% | 12/12 | 15.3% | 90.5% |
+| `compress_user_messages=True` | 1,113,048 → 1,022,594 | 8.1% | 12/12 | 14.9% | 90.5% |
+
+Unlocking user-message compression changed the outcome by 0.1 points, so the
+conservative default is not what bounds the result.
+
+The first edit lands at a median of 10% through the conversation. That means the
+saving is bought by invalidating roughly 85% of the cached prefix in order to
+remove 9.5% of it. Priced at cache rates (read 0.1x, write 1.25x), one request
+after such a rewrite costs about 0.97 per unit of history against 0.10 for
+leaving it alone, and the rewrite only repays itself after roughly 110 further
+turns — beyond the 99th percentile of session length in this corpus.
+
+**This is a retrospective application and must be read as one.** Headroom is
+built to run as a live proxy, compressing content as it ages out of the live
+zone, so in production the edit point advances gradually and the cache damage is
+spread across turns rather than taken at once. The arithmetic facing each
+individual edit is the same either way; the aggregate is not.
+
+The general result stands independently of any one tool: on this corpus a
+history rewrite must shrink the invalidated tail below 46.5% (10 turns
+remaining), 63.5% (20) or 81.3% (50) to break even. Measured shrink was 90.5%.
