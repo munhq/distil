@@ -33,19 +33,19 @@
 //! - `DISTIL_SUMMARIZER_API_KEY`  — API key for the summarizer endpoint
 
 use axum::{
+    Router,
     body::Body,
     extract::{Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Json, Response},
     routing::{get, post},
-    Router,
 };
 use distil::Layer;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
@@ -79,9 +79,7 @@ impl Config {
     fn from_env_and_args() -> Self {
         let args: Vec<String> = std::env::args().collect();
         let get_flag = |flag: &str| -> Option<String> {
-            args.windows(2)
-                .find(|w| w[0] == flag)
-                .map(|w| w[1].clone())
+            args.windows(2).find(|w| w[0] == flag).map(|w| w[1].clone())
         };
 
         let upstream = std::env::var("DISTIL_UPSTREAM")
@@ -93,15 +91,14 @@ impl Config {
             .or_else(|_| get_flag("--config").ok_or(()))
             .ok();
 
-        let pipeline_config = config_path.and_then(|path| {
-            match distil::PipelineConfig::from_file(&path) {
+        let pipeline_config =
+            config_path.and_then(|path| match distil::PipelineConfig::from_file(&path) {
                 Ok(cfg) => Some(cfg),
                 Err(e) => {
                     eprintln!("warning: failed to load config from {path}: {e}");
                     None
                 }
-            }
-        });
+            });
 
         Self {
             upstream,
@@ -402,8 +399,7 @@ fn build_default_pipeline(
         builder = builder.layer(distil::RegistryLayer::new(tool_specs, &counter));
     }
 
-    builder = builder
-        .layer(distil::MaskingLayer::new().retain_turns(3));
+    builder = builder.layer(distil::MaskingLayer::new().retain_turns(3));
 
     if let Some(s) = summarizer {
         builder = builder.layer(distil::SummarizationLayer::new(s));
@@ -447,20 +443,30 @@ async fn optimize(
     let distil_messages = to_distil_messages(&body.messages);
     let tool_specs = oai_tools_to_specs(&body.tools);
 
-    let turn = body.turn.unwrap_or_else(|| {
-        body.messages
-            .iter()
-            .filter(|m| m.role == "user")
-            .count() as u32
-    });
+    let turn = body
+        .turn
+        .unwrap_or_else(|| body.messages.iter().filter(|m| m.role == "user").count() as u32);
 
     let pipeline = if let Some(ref pipeline_config) = state.config.pipeline_config {
         // TOML-configured pipeline takes precedence
-        pipeline_config.build_pipeline(&oai_tools_to_specs(&body.tools), state.config.build_summarizer(), None)
+        pipeline_config.build_pipeline(
+            &oai_tools_to_specs(&body.tools),
+            state.config.build_summarizer(),
+            None,
+        )
     } else if let Some(ref config) = body.config {
-        build_pipeline_from_config(&body.tools, config, state.config.budget, state.config.build_summarizer())
+        build_pipeline_from_config(
+            &body.tools,
+            config,
+            state.config.budget,
+            state.config.build_summarizer(),
+        )
     } else {
-        build_default_pipeline(&body.tools, state.config.budget, state.config.build_summarizer())
+        build_default_pipeline(
+            &body.tools,
+            state.config.budget,
+            state.config.build_summarizer(),
+        )
     };
 
     let mut ctx = distil::Ctx::new(distil_messages, tool_specs, turn);
@@ -494,7 +500,10 @@ async fn tool_call(
     Json(body): Json<ToolCallRequest>,
 ) -> Json<ToolCallResponse> {
     // Try scratchpad tools first (note_write, note_read)
-    if let Some(output) = state.scratchpad.handle_tool_call(&body.name, &body.arguments) {
+    if let Some(output) = state
+        .scratchpad
+        .handle_tool_call(&body.name, &body.arguments)
+    {
         return Json(ToolCallResponse {
             output: Some(output),
             error: None,
@@ -548,15 +557,15 @@ async fn chat_completions(
     let pipeline = if let Some(ref pipeline_config) = state.config.pipeline_config {
         pipeline_config.build_pipeline(&tool_specs, state.config.build_summarizer(), None)
     } else {
-        build_default_pipeline(&body.tools, state.config.budget, state.config.build_summarizer())
+        build_default_pipeline(
+            &body.tools,
+            state.config.budget,
+            state.config.build_summarizer(),
+        )
     };
 
     let distil_messages = to_distil_messages(&body.messages);
-    let turn = body
-        .messages
-        .iter()
-        .filter(|m| m.role == "user")
-        .count();
+    let turn = body.messages.iter().filter(|m| m.role == "user").count();
 
     let mut ctx = distil::Ctx::new(distil_messages, tool_specs, turn as u32);
     let result = pipeline.optimize(&mut ctx);
@@ -623,11 +632,8 @@ async fn chat_completions(
     let upstream_resp = match req.send().await {
         Ok(r) => r,
         Err(e) => {
-            return error_response(
-                StatusCode::BAD_GATEWAY,
-                &format!("upstream error: {e}"),
-            )
-            .into_response();
+            return error_response(StatusCode::BAD_GATEWAY, &format!("upstream error: {e}"))
+                .into_response();
         }
     };
 
@@ -662,15 +668,12 @@ async fn chat_completions(
 
     if is_streaming {
         // Stream SSE chunks through without buffering
-        let byte_stream = upstream_resp.bytes_stream().map(|chunk| {
-            chunk.map_err(axum::Error::new)
-        });
+        let byte_stream = upstream_resp
+            .bytes_stream()
+            .map(|chunk| chunk.map_err(axum::Error::new));
         let body = Body::from_stream(byte_stream);
 
-        let mut response = Response::builder()
-            .status(status)
-            .body(body)
-            .unwrap();
+        let mut response = Response::builder().status(status).body(body).unwrap();
         *response.headers_mut() = distil_headers;
         response
     } else {
@@ -808,7 +811,10 @@ async fn main() {
     };
 
     let app = app
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());

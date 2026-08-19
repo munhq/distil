@@ -94,7 +94,10 @@ impl TiktokenCounter {
     /// Returns `None` only if the BPE data files are corrupt (never happens in practice).
     pub fn for_model(model: &str) -> Option<Self> {
         let (bpe, name) = Self::encoding_for_model(model)?;
-        Some(Self { bpe, encoding_name: name })
+        Some(Self {
+            bpe,
+            encoding_name: name,
+        })
     }
 
     /// Create a counter using `cl100k_base` (GPT-4 / Claude).
@@ -220,7 +223,9 @@ mod tests {
         #[test]
         fn tiktoken_more_accurate_than_estimate() {
             let text = "The quick brown fox jumps over the lazy dog.";
-            let tiktoken = TiktokenCounter::cl100k().expect("cl100k_base failed").count(text);
+            let tiktoken = TiktokenCounter::cl100k()
+                .expect("cl100k_base failed")
+                .count(text);
             let estimate = EstimateCounter.count(text);
             // tiktoken: 10 tokens (known ground truth for this sentence)
             assert_eq!(tiktoken, 10);

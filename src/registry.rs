@@ -31,7 +31,10 @@ impl ToolRegistry {
         let catalog_text = Self::build_catalog(&summaries);
         let catalog_tokens = counter.count(&catalog_text);
 
-        let full_tokens: usize = tools.iter().map(|t| counter.count(&t.to_prompt_text())).sum();
+        let full_tokens: usize = tools
+            .iter()
+            .map(|t| counter.count(&t.to_prompt_text()))
+            .sum();
 
         Self {
             tools,
@@ -97,7 +100,11 @@ impl ToolRegistry {
             "brief" => {
                 let mut out = format!("Found {} matching tool(s):\n", results.len());
                 for tool in results {
-                    out.push_str(&format!("- `{}` — {}\n", tool.name, first_sentence(&tool.description)));
+                    out.push_str(&format!(
+                        "- `{}` — {}\n",
+                        tool.name,
+                        first_sentence(&tool.description)
+                    ));
                 }
                 out
             }
@@ -130,16 +137,17 @@ impl ToolRegistry {
             .iter()
             .filter_map(|tool| {
                 let score = relevance_score(&query_terms, &tool.name, &tool.description);
-                if score > 0 {
-                    Some((score, tool))
-                } else {
-                    None
-                }
+                if score > 0 { Some((score, tool)) } else { None }
             })
             .collect();
 
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
-        scored.into_iter().take(max_results).map(|(_, t)| t).collect()
+        // Descending by score; Reverse keeps it a key comparison.
+        scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+        scored
+            .into_iter()
+            .take(max_results)
+            .map(|(_, t)| t)
+            .collect()
     }
 
     /// Look up a tool by exact name.
@@ -168,7 +176,9 @@ impl ToolRegistry {
 
     /// Generate TypeScript-style function signatures for code mode.
     pub fn to_typescript_defs(&self) -> String {
-        let mut out = String::from("// Available tool functions (call with JSON string arg, returns string):\n");
+        let mut out = String::from(
+            "// Available tool functions (call with JSON string arg, returns string):\n",
+        );
         for tool in &self.tools {
             out.push_str(&Self::ts_signature(tool));
             out.push('\n');
@@ -196,7 +206,11 @@ impl ToolRegistry {
             .iter()
             .map(|(name, prop)| {
                 let ts_type = Self::json_type_to_ts(prop);
-                let optional = if required.contains(&name.as_str()) { "" } else { "?" };
+                let optional = if required.contains(&name.as_str()) {
+                    ""
+                } else {
+                    "?"
+                };
                 format!("{name}{optional}: {ts_type}")
             })
             .collect::<Vec<_>>()
@@ -215,7 +229,9 @@ impl ToolRegistry {
     }
 
     fn build_catalog(summaries: &[ToolSummary]) -> String {
-        let mut out = String::from("## Available Tools\n\nUse `tool_search` to get the full schema for any tool before calling it.\n\n");
+        let mut out = String::from(
+            "## Available Tools\n\nUse `tool_search` to get the full schema for any tool before calling it.\n\n",
+        );
         for s in summaries {
             out.push_str(&format!("{s}\n"));
         }
@@ -427,26 +443,30 @@ mod tests {
 
     #[test]
     fn typescript_defs_basic() {
-        let tools = vec![
-            ToolSpec {
-                name: "shell".into(),
-                description: "Run a command".into(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "command": {"type": "string"},
-                        "timeout": {"type": "integer"}
-                    },
-                    "required": ["command"]
-                }),
-            },
-        ];
+        let tools = vec![ToolSpec {
+            name: "shell".into(),
+            description: "Run a command".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "timeout": {"type": "integer"}
+                },
+                "required": ["command"]
+            }),
+        }];
         let counter = EstimateCounter;
         let registry = ToolRegistry::new(tools, &counter);
         let ts = registry.to_typescript_defs();
         assert!(ts.contains("function shell"), "should have function: {ts}");
-        assert!(ts.contains("command: string"), "should have required param: {ts}");
-        assert!(ts.contains("timeout?: number"), "should have optional param: {ts}");
+        assert!(
+            ts.contains("command: string"),
+            "should have required param: {ts}"
+        );
+        assert!(
+            ts.contains("timeout?: number"),
+            "should have optional param: {ts}"
+        );
     }
 
     #[test]
@@ -455,8 +475,14 @@ mod tests {
         let registry = ToolRegistry::new(sample_tools(), &counter);
         let ts = registry.to_typescript_defs();
         assert!(ts.contains("function shell"), "should have shell: {ts}");
-        assert!(ts.contains("function file_read"), "should have file_read: {ts}");
-        assert!(ts.contains("function git_status"), "should have git_status: {ts}");
+        assert!(
+            ts.contains("function file_read"),
+            "should have file_read: {ts}"
+        );
+        assert!(
+            ts.contains("function git_status"),
+            "should have git_status: {ts}"
+        );
     }
 
     #[test]
@@ -467,7 +493,10 @@ mod tests {
         let spec = registry.search_tool_spec();
         assert_eq!(spec.name, "tool_search");
         assert!(spec.parameters["properties"]["query"].is_object());
-        assert!(spec.parameters["properties"]["detail"].is_object(), "should have detail param");
+        assert!(
+            spec.parameters["properties"]["detail"].is_object(),
+            "should have detail param"
+        );
     }
 
     #[test]
@@ -476,10 +505,19 @@ mod tests {
         let registry = ToolRegistry::new(sample_tools(), &counter);
         let results = registry.search("file", 10);
         let output = registry.format_results(&results, "name_only");
-        assert!(output.contains("file_read"), "should list file_read: {output}");
-        assert!(output.contains("file_write"), "should list file_write: {output}");
+        assert!(
+            output.contains("file_read"),
+            "should list file_read: {output}"
+        );
+        assert!(
+            output.contains("file_write"),
+            "should list file_write: {output}"
+        );
         // name_only should NOT contain parameter schemas
-        assert!(!output.contains("Parameters:"), "name_only should not have schemas: {output}");
+        assert!(
+            !output.contains("Parameters:"),
+            "name_only should not have schemas: {output}"
+        );
     }
 
     #[test]
@@ -489,8 +527,14 @@ mod tests {
         let results = registry.search("shell", 10);
         let output = registry.format_results(&results, "brief");
         assert!(output.contains("shell"), "should have tool name: {output}");
-        assert!(output.contains("Execute a shell command."), "should have brief description: {output}");
-        assert!(!output.contains("Parameters:"), "brief should not have schemas: {output}");
+        assert!(
+            output.contains("Execute a shell command."),
+            "should have brief description: {output}"
+        );
+        assert!(
+            !output.contains("Parameters:"),
+            "brief should not have schemas: {output}"
+        );
     }
 
     #[test]
@@ -499,7 +543,10 @@ mod tests {
         let registry = ToolRegistry::new(sample_tools(), &counter);
         let results = registry.search("git", 10);
         let output = registry.format_results(&results, "full");
-        assert!(output.contains("Parameters:"), "full should have schemas: {output}");
+        assert!(
+            output.contains("Parameters:"),
+            "full should have schemas: {output}"
+        );
     }
 
     #[test]

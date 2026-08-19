@@ -195,7 +195,11 @@ mod tests {
         layer.apply(&mut ctx, &counter);
 
         // Should have merged into one system message
-        let system_msgs: Vec<_> = ctx.messages.iter().filter(|m| m.role == Role::System).collect();
+        let system_msgs: Vec<_> = ctx
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::System)
+            .collect();
         assert_eq!(system_msgs.len(), 1);
         assert!(system_msgs[0].content.contains("helpful assistant"));
         assert!(system_msgs[0].content.contains("concise"));
@@ -239,11 +243,7 @@ mod tests {
         let counter = EstimateCounter;
         let layer = CacheAlignLayer::anthropic();
 
-        let mut ctx = Ctx::new(
-            vec![Message::system("Be helpful.")],
-            vec![],
-            0,
-        );
+        let mut ctx = Ctx::new(vec![Message::system("Be helpful.")], vec![], 0);
         ctx.catalog = Some("## Tools\n- shell".into());
 
         layer.apply(&mut ctx, &counter);
@@ -256,11 +256,7 @@ mod tests {
         let counter = EstimateCounter;
         let layer = CacheAlignLayer::generic();
 
-        let mut ctx = Ctx::new(
-            vec![Message::system("Be helpful.")],
-            vec![],
-            0,
-        );
+        let mut ctx = Ctx::new(vec![Message::system("Be helpful.")], vec![], 0);
         ctx.catalog = Some("## Tools\n- shell".into());
 
         layer.apply(&mut ctx, &counter);

@@ -59,19 +59,21 @@ pub mod summarizer;
 pub mod types;
 
 // Re-exports for convenience
-pub use counter::{counter_for_model, EstimateCounter, TokenCounter, WordCounter};
+#[cfg(feature = "config")]
+pub use config::PipelineConfig;
 #[cfg(feature = "tiktoken")]
 pub use counter::TiktokenCounter;
+pub use counter::{EstimateCounter, TokenCounter, WordCounter, counter_for_model};
 pub use error::Error;
 pub use layers::*;
 pub use masker::JsonTruncateConfig;
-pub use pipeline::{Ctx, Layer, LayerResult, OptimizationState, Phase, Pipeline, PipelineResult, ToolExecutor};
-pub use probe::{Probe, ProbeEvaluator, ProbeReport, ProbeResult, ProbeType};
-pub use summarizer::{Summarizer, DEFAULT_SUMMARIZER_SYSTEM_PROMPT};
-#[cfg(feature = "proxy")]
-pub use summarizer::{HttpSummarizer, OllamaSummarizer};
-pub use types::{Message, ToolSpec};
-#[cfg(feature = "config")]
-pub use config::PipelineConfig;
 #[cfg(feature = "metrics")]
 pub use metrics::DistilMetrics;
+pub use pipeline::{
+    Ctx, Layer, LayerResult, OptimizationState, Phase, Pipeline, PipelineResult, ToolExecutor,
+};
+pub use probe::{Probe, ProbeEvaluator, ProbeReport, ProbeResult, ProbeType};
+pub use summarizer::{Completer, DEFAULT_SUMMARIZER_SYSTEM_PROMPT, Summarizer};
+#[cfg(feature = "proxy")]
+pub use summarizer::{HttpSummarizer, OllamaCompleter, OllamaSummarizer};
+pub use types::{Message, ToolSpec};

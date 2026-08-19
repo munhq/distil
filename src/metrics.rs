@@ -110,11 +110,9 @@ impl DistilMetrics {
         )
         .expect("metric creation failed");
 
-        let optimizations = IntCounter::new(
-            "optimizations_total",
-            "Total number of optimize() calls",
-        )
-        .expect("metric creation failed");
+        let optimizations =
+            IntCounter::new("optimizations_total", "Total number of optimize() calls")
+                .expect("metric creation failed");
 
         let probe_success = IntCounterVec::new(
             Opts::new("probe_success_total", "Probe questions answered correctly"),
@@ -123,16 +121,16 @@ impl DistilMetrics {
         .expect("metric creation failed");
 
         let probe_failure = IntCounterVec::new(
-            Opts::new("probe_failure_total", "Probe questions answered incorrectly"),
+            Opts::new(
+                "probe_failure_total",
+                "Probe questions answered incorrectly",
+            ),
             &["type"],
         )
         .expect("metric creation failed");
 
         let probe_success_rate = GaugeVec::new(
-            Opts::new(
-                "probe_success_rate",
-                "Latest probe success rate (0.0-1.0)",
-            ),
+            Opts::new("probe_success_rate", "Latest probe success rate (0.0-1.0)"),
             &["scope"],
         )
         .expect("metric creation failed");

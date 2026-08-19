@@ -342,27 +342,24 @@ impl CodeModeLayer {
             }
 
             // Wrap the script in a function to support `return`
-            let wrapped = format!(
-                "(function() {{ {} }})()",
-                script
-            );
+            let wrapped = format!("(function() {{ {} }})()", script);
 
             // Execute
-            let result: rquickjs::Value = ctx
-                .eval(wrapped)
-                .map_err(|e| {
-                    // Try to get a more detailed error
-                    let exception = ctx.catch();
-                    if let Some(exc) = exception.as_exception() {
-                        format!("JS execution failed: {exc}")
-                    } else {
-                        format!("JS execution failed: {e}")
-                    }
-                })?;
+            let result: rquickjs::Value = ctx.eval(wrapped).map_err(|e| {
+                // Try to get a more detailed error
+                let exception = ctx.catch();
+                if let Some(exc) = exception.as_exception() {
+                    format!("JS execution failed: {exc}")
+                } else {
+                    format!("JS execution failed: {e}")
+                }
+            })?;
 
             // Convert result to string
             match result.as_string() {
-                Some(s) => s.to_string().map_err(|e| format!("failed to read JS string: {e}")),
+                Some(s) => s
+                    .to_string()
+                    .map_err(|e| format!("failed to read JS string: {e}")),
                 None => {
                     // Try to stringify non-string results
                     let json_stringify: Function = globals
@@ -416,11 +413,7 @@ impl Layer for CodeModeLayer {
         }
     }
 
-    fn handle_tool_call(
-        &self,
-        tool_name: &str,
-        args: &serde_json::Value,
-    ) -> Option<String> {
+    fn handle_tool_call(&self, tool_name: &str, args: &serde_json::Value) -> Option<String> {
         if tool_name != "run_script" {
             return None;
         }
@@ -515,8 +508,8 @@ mod tests {
 
     #[test]
     fn executes_simple_script() {
-        let layer = CodeModeLayer::new(MockExecutor)
-            .tool_names(vec!["shell".into(), "git_status".into()]);
+        let layer =
+            CodeModeLayer::new(MockExecutor).tool_names(vec!["shell".into(), "git_status".into()]);
 
         let result = layer.handle_tool_call(
             "run_script",
@@ -534,16 +527,12 @@ mod tests {
             output.contains("Finished"),
             "should have build output: {output}"
         );
-        assert!(
-            output.contains("main"),
-            "should have git status: {output}"
-        );
+        assert!(output.contains("main"), "should have git status: {output}");
     }
 
     #[test]
     fn handles_script_errors() {
-        let layer = CodeModeLayer::new(MockExecutor)
-            .tool_names(vec!["shell".into()]);
+        let layer = CodeModeLayer::new(MockExecutor).tool_names(vec!["shell".into()]);
 
         let result = layer.handle_tool_call(
             "run_script",
@@ -553,16 +542,13 @@ mod tests {
         );
 
         let output = result.unwrap();
-        assert!(
-            output.contains("ERROR"),
-            "should report error: {output}"
-        );
+        assert!(output.contains("ERROR"), "should report error: {output}");
     }
 
     #[test]
     fn returns_json_objects() {
-        let layer = CodeModeLayer::new(MockExecutor)
-            .tool_names(vec!["shell".into(), "git_status".into()]);
+        let layer =
+            CodeModeLayer::new(MockExecutor).tool_names(vec!["shell".into(), "git_status".into()]);
 
         let result = layer.handle_tool_call(
             "run_script",
@@ -587,10 +573,7 @@ mod tests {
     fn rejects_empty_script() {
         let layer = CodeModeLayer::new(MockExecutor);
 
-        let result = layer.handle_tool_call(
-            "run_script",
-            &serde_json::json!({"script": ""}),
-        );
+        let result = layer.handle_tool_call("run_script", &serde_json::json!({"script": ""}));
 
         let output = result.unwrap();
         assert!(output.contains("ERROR"), "should reject empty: {output}");
@@ -626,8 +609,7 @@ mod tests {
 
     #[test]
     fn handles_tool_execution_errors() {
-        let layer = CodeModeLayer::new(MockExecutor)
-            .tool_names(vec!["unknown_tool".into()]);
+        let layer = CodeModeLayer::new(MockExecutor).tool_names(vec!["unknown_tool".into()]);
 
         let result = layer.handle_tool_call(
             "run_script",
@@ -657,8 +639,8 @@ mod tests {
 
     #[test]
     fn deny_tools_blocks_specific_tools() {
-        let layer = CodeModeLayer::new(MockExecutor)
-            .deny_tools(vec!["shell".into(), "file_write".into()]);
+        let layer =
+            CodeModeLayer::new(MockExecutor).deny_tools(vec!["shell".into(), "file_write".into()]);
 
         assert!(!layer.is_tool_allowed("shell"));
         assert!(!layer.is_tool_allowed("file_write"));
@@ -668,8 +650,7 @@ mod tests {
 
     #[test]
     fn read_only_permissions() {
-        let layer = CodeModeLayer::new(MockExecutor)
-            .permissions(vec![ToolPermission::ReadOnly]);
+        let layer = CodeModeLayer::new(MockExecutor).permissions(vec![ToolPermission::ReadOnly]);
 
         assert!(layer.is_tool_allowed("file_read"));
         assert!(layer.is_tool_allowed("git_status"));
@@ -701,11 +682,10 @@ mod tests {
 
     #[test]
     fn named_permission() {
-        let layer = CodeModeLayer::new(MockExecutor)
-            .permissions(vec![
-                ToolPermission::Named("shell".into()),
-                ToolPermission::Named("git_status".into()),
-            ]);
+        let layer = CodeModeLayer::new(MockExecutor).permissions(vec![
+            ToolPermission::Named("shell".into()),
+            ToolPermission::Named("git_status".into()),
+        ]);
 
         assert!(layer.is_tool_allowed("shell"));
         assert!(layer.is_tool_allowed("git_status"));
@@ -778,7 +758,10 @@ mod tests {
         );
 
         let output = result.unwrap();
-        assert!(output.contains("undefined"), "shell should not be registered: {output}");
+        assert!(
+            output.contains("undefined"),
+            "shell should not be registered: {output}"
+        );
 
         // file_read is ReadOnly, should work
         let result2 = layer.handle_tool_call(
@@ -789,6 +772,9 @@ mod tests {
         );
 
         let output2 = result2.unwrap();
-        assert!(output2.contains("contents of test.rs"), "file_read should work: {output2}");
+        assert!(
+            output2.contains("contents of test.rs"),
+            "file_read should work: {output2}"
+        );
     }
 }

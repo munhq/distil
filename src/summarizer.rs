@@ -47,6 +47,25 @@ DISCARD (low signal):\n\
 ///     }
 /// }
 /// ```
+/// Raw text completion: the prompt goes to the model exactly as written.
+///
+/// Separate from [`Summarizer`] on purpose. A `Summarizer` is free to impose
+/// summarization framing — the shipped [`OllamaSummarizer`] prepends a system
+/// prompt and wraps its input in "Summarize this conversation…" — which is
+/// correct for summarizing and destructive for anything else.
+///
+/// [`crate::probe::ProbeEvaluator`] used to ask a `Summarizer` for probe
+/// questions and for yes/no grades. Neither is a summary, so the framing
+/// silently rewrote both instructions and the evaluator measured nothing while
+/// reporting success. Requiring a distinct trait makes that mistake unspellable
+/// rather than merely discouraged.
+pub trait Completer: Send + Sync {
+    /// Send `prompt` verbatim and return the model's reply.
+    ///
+    /// Implementations MUST NOT add framing, instructions or system prompts.
+    fn complete(&self, prompt: &str, max_tokens: usize) -> crate::error::Result<String>;
+}
+
 pub trait Summarizer: Send + Sync {
     /// Summarize the given content into at most `max_tokens` tokens.
     ///
@@ -85,7 +104,11 @@ pub struct HttpSummarizer {
 
 #[cfg(feature = "proxy")]
 impl HttpSummarizer {
-    pub fn new(endpoint: impl Into<String>, model: impl Into<String>, api_key: impl Into<String>) -> Self {
+    pub fn new(
+        endpoint: impl Into<String>,
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Self {
         Self {
             endpoint: endpoint.into(),
             model: model.into(),
@@ -141,7 +164,9 @@ impl Summarizer for HttpSummarizer {
                 .map_err(|e| format!("HTTP request failed: {e}"))?;
 
             let status = resp.status();
-            let text = resp.text().map_err(|e| format!("failed to read response: {e}"))?;
+            let text = resp
+                .text()
+                .map_err(|e| format!("failed to read response: {e}"))?;
 
             if !status.is_success() {
                 return Err(format!("HTTP {status}: {text}"));
@@ -237,14 +262,17 @@ impl Summarizer for OllamaSummarizer {
         let url = format!("{}/api/chat", self.endpoint);
 
         let do_request = || -> Result<String, String> {
-            let resp = self.client
+            let resp = self
+                .client
                 .post(&url)
                 .json(&body)
                 .send()
                 .map_err(|e| format!("Ollama request failed: {e}"))?;
 
             let status = resp.status();
-            let text = resp.text().map_err(|e| format!("failed to read response: {e}"))?;
+            let text = resp
+                .text()
+                .map_err(|e| format!("failed to read response: {e}"))?;
 
             if !status.is_success() {
                 return Err(format!("Ollama HTTP {status}: {text}"));
@@ -269,5 +297,77 @@ impl Summarizer for OllamaSummarizer {
         };
 
         result.map_err(crate::Error::Summarization)
+    }
+}
+
+// ── OllamaCompleter — verbatim prompts against a local Ollama ───────────────
+
+/// Sends a prompt to a local Ollama instance with no added framing.
+///
+/// This is the counterpart to [`OllamaSummarizer`] for callers that need the
+/// model to follow their own instructions — [`crate::probe::ProbeEvaluator`] is
+/// the one in this crate.
+///
+/// The timeout is a constructor argument rather than a constant because a small
+/// local model on CPU needs minutes for a real session, and the 30-second
+/// default on the summarizer made the probe path fail as a timeout that looked
+/// like a model refusal.
+#[cfg(feature = "proxy")]
+pub struct OllamaCompleter {
+    endpoint: String,
+    model: String,
+    client: reqwest::blocking::Client,
+}
+
+#[cfg(feature = "proxy")]
+impl OllamaCompleter {
+    pub fn new(model: impl Into<String>, timeout_secs: u64) -> Self {
+        Self {
+            endpoint: "http://localhost:11434".into(),
+            model: model.into(),
+            client: reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(timeout_secs))
+                .build()
+                .expect("failed to build HTTP client"),
+        }
+    }
+
+    pub fn endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.endpoint = endpoint.into();
+        self
+    }
+}
+
+#[cfg(feature = "proxy")]
+impl Completer for OllamaCompleter {
+    fn complete(&self, prompt: &str, max_tokens: usize) -> crate::error::Result<String> {
+        let body = serde_json::json!({
+            "model": self.model,
+            "messages": [{ "role": "user", "content": prompt }],
+            "stream": false,
+            // Deterministic so a benchmark re-run is comparable.
+            "options": { "num_predict": max_tokens as i64, "temperature": 0 }
+        });
+        let resp = self
+            .client
+            .post(format!("{}/api/chat", self.endpoint))
+            .json(&body)
+            .send()
+            .map_err(|e| crate::Error::Summarization(format!("ollama request failed: {e}")))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .map_err(|e| crate::Error::Summarization(format!("read failed: {e}")))?;
+        if !status.is_success() {
+            return Err(crate::Error::Summarization(format!(
+                "ollama HTTP {status}: {text}"
+            )));
+        }
+        let json: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| crate::Error::Summarization(format!("invalid JSON: {e}")))?;
+        Ok(json["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string())
     }
 }

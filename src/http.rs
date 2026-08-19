@@ -282,11 +282,7 @@ mod tests {
 
     #[test]
     fn auth_metrics_endpoint_requires_auth() {
-        assert!(!check_bearer_auth(
-            None,
-            "/metrics",
-            Some("my-secret-key"),
-        ));
+        assert!(!check_bearer_auth(None, "/metrics", Some("my-secret-key"),));
         assert!(check_bearer_auth(
             Some("Bearer my-secret-key"),
             "/metrics",

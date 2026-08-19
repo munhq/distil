@@ -24,8 +24,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rayon::prelude::*;
 
-use distil::corpus::{find_transcripts, load_session, SegmentKind, TurnUsage};
-use distil::counter::{counter_for_model, TokenCounter};
+use distil::corpus::{SegmentKind, TurnUsage, find_transcripts, load_session};
+use distil::counter::{TokenCounter, counter_for_model};
 
 /// Per-class totals for one pass over the corpus.
 #[derive(Default, Clone)]
@@ -199,8 +199,12 @@ fn main() {
     // input. A compressor benchmarked on its own fixtures proves nothing.
     let export = flag("--export-payloads");
     let export_sessions = flag("--export-sessions");
-    let min_turns: usize = flag("--min-turns").and_then(|v| v.parse().ok()).unwrap_or(40);
-    let max_sessions: usize = flag("--max-sessions").and_then(|v| v.parse().ok()).unwrap_or(60);
+    let min_turns: usize = flag("--min-turns")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40);
+    let max_sessions: usize = flag("--max-sessions")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
     let per_tool_cap: usize = flag("--per-tool")
         .and_then(|v| v.parse().ok())
         .unwrap_or(400);
@@ -301,10 +305,7 @@ fn main() {
     println!("{:<16} {:>14} {:>7.1}%", "TOTAL", local, 100.0);
 
     println!("\n=== what the provider billed (tokens) ===");
-    println!(
-        "{:<22} {:>16} {:>8}",
-        "class", "tokens", "share"
-    );
+    println!("{:<22} {:>16} {:>8}", "class", "tokens", "share");
     for (label, v) in [
         ("input (uncached)", totals.billed.input),
         ("cache write 5m", totals.billed.cache_write_5m),
@@ -413,7 +414,7 @@ fn main() {
             tok,
             pct(**tok, result_total),
             calls,
-            if calls > 0 { **tok / calls } else { 0 }
+            tok.checked_div(calls).unwrap_or(0)
         );
     }
 
@@ -445,7 +446,9 @@ fn main() {
         "but they hold {:.1}% of all assistant turns.",
         pct(turns_in_long, turn_total)
     );
-    println!("Compression can only pay inside those; the rest are too short to amortise a rewrite.");
+    println!(
+        "Compression can only pay inside those; the rest are too short to amortise a rewrite."
+    );
 
     let mut sorted = totals.session_tokens.clone();
     sorted.sort_unstable();
@@ -550,14 +553,31 @@ fn report_split(measured: &[(Totals, bool)], prefix: &str) {
         *t.by_kind.get(key).unwrap_or(&0) as f64 / t.assistant_turns as f64
     };
 
-    println!("sessions                   {:>16} {:>16}", 
-        with.session_turns.len(), without.session_turns.len());
-    println!("assistant turns            {:>16} {:>16}",
-        with.assistant_turns, without.assistant_turns);
+    println!(
+        "sessions                   {:>16} {:>16}",
+        with.session_turns.len(),
+        without.session_turns.len()
+    );
+    println!(
+        "assistant turns            {:>16} {:>16}",
+        with.assistant_turns, without.assistant_turns
+    );
 
-    row("tool_result tok/turn", per_turn(&with, "tool_result"), per_turn(&without, "tool_result"));
-    row("tool_use tok/turn", per_turn(&with, "tool_use"), per_turn(&without, "tool_use"));
-    row("assistant_text tok/turn", per_turn(&with, "assistant_text"), per_turn(&without, "assistant_text"));
+    row(
+        "tool_result tok/turn",
+        per_turn(&with, "tool_result"),
+        per_turn(&without, "tool_result"),
+    );
+    row(
+        "tool_use tok/turn",
+        per_turn(&with, "tool_use"),
+        per_turn(&without, "tool_use"),
+    );
+    row(
+        "assistant_text tok/turn",
+        per_turn(&with, "assistant_text"),
+        per_turn(&without, "assistant_text"),
+    );
     row(
         "all text tok/turn",
         with.local_total() as f64 / with.assistant_turns.max(1) as f64,
@@ -592,9 +612,7 @@ fn report_split(measured: &[(Totals, bool)], prefix: &str) {
             let sel: Vec<&Totals> = measured
                 .iter()
                 .filter(|(t, used)| {
-                    *used == want
-                        && t.assistant_turns >= lo
-                        && t.assistant_turns <= hi
+                    *used == want && t.assistant_turns >= lo && t.assistant_turns <= hi
                 })
                 .map(|(t, _)| t)
                 .collect();
@@ -622,13 +640,18 @@ fn report_split(measured: &[(Totals, bool)], prefix: &str) {
     println!("\n--- what the tool itself put in context ---");
     let mut rt: Vec<_> = with.result_by_tool.iter().collect();
     rt.sort_by_key(|(_, v)| std::cmp::Reverse(**v));
-    println!("{:<34} {:>14} {:>10} {:>10}", "tool", "result tokens", "calls", "per call");
+    println!(
+        "{:<34} {:>14} {:>10} {:>10}",
+        "tool", "result tokens", "calls", "per call"
+    );
     for (name, tok) in rt.iter().take(12) {
         let calls = *with.result_calls_by_tool.get(*name).unwrap_or(&0);
         println!(
             "{:<34} {:>14} {:>10} {:>10}",
-            name, tok, calls,
-            if calls > 0 { **tok / calls } else { 0 }
+            name,
+            tok,
+            calls,
+            tok.checked_div(calls).unwrap_or(0)
         );
     }
 }
@@ -641,12 +664,7 @@ fn report_split(measured: &[(Totals, bool)], prefix: &str) {
 /// sample would measure one tool while claiming to measure the corpus. The true
 /// population weight of each tool is written alongside, so a result can be
 /// reweighted back to corpus proportions instead of reported as a raw mean.
-fn export_payloads(
-    files: &[PathBuf],
-    counter: &dyn TokenCounter,
-    out_path: &str,
-    cap: usize,
-) {
+fn export_payloads(files: &[PathBuf], counter: &dyn TokenCounter, out_path: &str, cap: usize) {
     use std::io::Write;
 
     // Population totals first, so weights are exact rather than estimated.
@@ -706,8 +724,7 @@ fn export_payloads(
                 continue;
             }
             *c += 1;
-            let (pop_tokens, pop_calls) =
-                pop.get(&tool).copied().unwrap_or((0, 0));
+            let (pop_tokens, pop_calls) = pop.get(&tool).copied().unwrap_or((0, 0));
             let rec = serde_json::json!({
                 "tool": tool,
                 "tokens": counter.count(&seg.text),
@@ -723,7 +740,10 @@ fn export_payloads(
             written += 1;
         }
     }
-    eprintln!("exported {written} payloads across {} tools to {out_path}", taken.len());
+    eprintln!(
+        "exported {written} payloads across {} tools to {out_path}",
+        taken.len()
+    );
 }
 
 /// Write whole sessions as Anthropic-format message arrays.

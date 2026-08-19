@@ -372,10 +372,7 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
                                 .map(|v| v.to_string())
                                 .unwrap_or_else(|| "{}".to_string());
                             if let Some(id) = b.get("id").and_then(|v| v.as_str()) {
-                                tool_use_names.insert(
-                                    id.to_string(),
-                                    (name.clone(), args.clone()),
-                                );
+                                tool_use_names.insert(id.to_string(), (name.clone(), args.clone()));
                             }
                             segments.push(Segment {
                                 kind: SegmentKind::ToolUse,
@@ -598,7 +595,10 @@ mod attribution_tests {
 "#;
         let mut p = std::env::temp_dir();
         p.push("distil-corpus-test-attrib.jsonl");
-        File::create(&p).unwrap().write_all(body.as_bytes()).unwrap();
+        File::create(&p)
+            .unwrap()
+            .write_all(body.as_bytes())
+            .unwrap();
         let s = load_session(&p).unwrap();
 
         let results: Vec<_> = s

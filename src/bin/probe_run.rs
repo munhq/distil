@@ -16,71 +16,20 @@
 //! judge at all, see `bench/artifact_retention.py`, which checks file paths
 //! against ground truth.
 //!
+//! The judge is a [`distil::Completer`], never a `Summarizer`: a summarizer is
+//! entitled to wrap its input in summarization framing, which rewrites both the
+//! probe format and the grading instruction. Swap `OllamaCompleter` for a
+//! hosted-model `Completer` to run this against a judge worth quoting.
+//!
 //! Usage:
 //!   distil-probe <session.jsonl> [--probes N] [--model NAME] [--retain N]
 
 use distil::corpus::load_session;
-use distil::counter::{counter_for_model, TokenCounter};
+use distil::counter::{TokenCounter, counter_for_model};
 use distil::layers::MaskingLayer;
 use distil::pipeline::{Ctx, Pipeline};
 use distil::probe::ProbeEvaluator;
-use distil::summarizer::Summarizer;
-
-/// A verbatim Ollama client.
-///
-/// `ProbeEvaluator` hands its prompt to a `Summarizer`, but a probe prompt is
-/// not a summarization request — it asks for `TYPE|QUESTION|ANSWER` lines, or
-/// for a yes/no grade. The shipped `OllamaSummarizer` prepends a summarizer
-/// system prompt and wraps the input in "Summarize this conversation in under N
-/// tokens:", which destroys both instructions. It also fixes a 30-second
-/// timeout, and a 3B model on CPU needs longer than that for a real session.
-///
-/// So this sends the prompt exactly as given. The underlying issue is that
-/// `ProbeEvaluator` should depend on a raw-completion trait rather than on
-/// `Summarizer`; until that changes, every probe caller needs an adapter like
-/// this one, and a caller who reuses `OllamaSummarizer` gets silent nonsense.
-struct RawOllama {
-    endpoint: String,
-    model: String,
-    client: reqwest::blocking::Client,
-}
-
-impl RawOllama {
-    fn new(model: &str, timeout_secs: u64) -> Self {
-        Self {
-            endpoint: "http://localhost:11434".into(),
-            model: model.to_string(),
-            client: reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(timeout_secs))
-                .build()
-                .expect("failed to build HTTP client"),
-        }
-    }
-}
-
-impl Summarizer for RawOllama {
-    fn summarize(&self, content: &str, max_tokens: usize) -> distil::error::Result<String> {
-        let body = serde_json::json!({
-            "model": self.model,
-            "messages": [{ "role": "user", "content": content }],
-            "stream": false,
-            // Deterministic, so a re-run of the benchmark is comparable.
-            "options": { "num_predict": max_tokens as i64, "temperature": 0 }
-        });
-        let resp = self
-            .client
-            .post(format!("{}/api/chat", self.endpoint))
-            .json(&body)
-            .send()
-            .map_err(|e| distil::Error::Summarization(format!("ollama request failed: {e}")))?;
-        let text = resp
-            .text()
-            .map_err(|e| distil::Error::Summarization(format!("read failed: {e}")))?;
-        let json: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| distil::Error::Summarization(format!("invalid JSON: {e}")))?;
-        Ok(json["message"]["content"].as_str().unwrap_or("").to_string())
-    }
-}
+use distil::summarizer::OllamaCompleter;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -90,7 +39,10 @@ fn main() {
     }
     let path = std::path::PathBuf::from(&args[1]);
     let flag = |n: &str| -> Option<String> {
-        args.iter().position(|a| a == n).and_then(|i| args.get(i + 1)).cloned()
+        args.iter()
+            .position(|a| a == n)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
     };
     let n_probes: usize = flag("--probes").and_then(|v| v.parse().ok()).unwrap_or(6);
     let model = flag("--model").unwrap_or_else(|| "qwen2.5:3b".to_string());
@@ -136,8 +88,10 @@ fn main() {
     println!("pipeline  {result}");
 
     println!("\njudge: ollama/{model} (small local model — see the module note)");
-    let timeout: u64 = flag("--timeout").and_then(|v| v.parse().ok()).unwrap_or(600);
-    let evaluator = ProbeEvaluator::new(RawOllama::new(&model, timeout)).num_probes(n_probes);
+    let timeout: u64 = flag("--timeout")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(600);
+    let evaluator = ProbeEvaluator::new(OllamaCompleter::new(&model, timeout)).num_probes(n_probes);
 
     let probes = match evaluator.generate_probes(&original) {
         Ok(p) => p,
@@ -146,7 +100,10 @@ fn main() {
             std::process::exit(1);
         }
     };
-    println!("generated {} probes from the ORIGINAL context", probes.len());
+    println!(
+        "generated {} probes from the ORIGINAL context",
+        probes.len()
+    );
     for p in &probes {
         println!("  [{}] {}", p.probe_type, p.question);
     }
@@ -172,10 +129,7 @@ fn main() {
         println!("--- ORIGINAL context (control) ---");
         print!("{c}");
         let delta = compressed_report.success_rate - c.success_rate;
-        println!(
-            "\nretention delta vs control: {:+.1} points",
-            delta * 100.0
-        );
+        println!("\nretention delta vs control: {:+.1} points", delta * 100.0);
         println!(
             "A control below 100% is judge error, not compression damage. Only the\n\
              gap between the two lines is attributable to compression."
