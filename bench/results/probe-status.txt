@@ -1,32 +1,46 @@
-distil-probe — LLM-graded retention: harness complete, run BLOCKED
+distil-probe — LLM-graded retention
 
-Blocker: no Anthropic credentials on this machine (no `ant`, no
-ANTHROPIC_API_KEY). The only local judge is ollama qwen2.5:3b.
+STATUS: harness complete and its defect fixed; end-to-end run still executing
+on a saturated CPU with a 3B judge. Not yet a published number.
 
-What was verified:
-  - The harness runs end to end and the parser is correct. On a short
-    context qwen2.5:3b returns well-formed probes and probe.rs parses
-    them:
-        recall|What was the specific error...|E0308 in src/auth.rs line 42
-        artifact|What change did you make...|Changed the return type
-        decision|Was the problem resolved...|Yes, by the return type
-  - distil's MaskingLayer compresses real sessions: 78.5% on a 15-message
-    session (3,070 -> 660 tokens), 49.6% on a 100-message session
-    (17,974 -> 9,053).
+WHAT WAS PROVEN
+  A real defect, found by running the thing rather than reading it.
+  parse_probes split on '|' and read field zero as the probe type. Models
+  wrap the requested format in a numbered list and pad it with pipes, so a
+  real line from qwen2.5:3b looked like:
 
-What failed, and why it is the judge and not the harness:
-  - Probe generation sends the ENTIRE original conversation in one prompt.
-    On a 17,974-token session qwen2.5:3b returned nothing parseable and
-    generate_probes yielded 0 probes.
-  - probe.rs has no chunking, no retry and no format repair. Zero probes
-    is reported as an empty vector, not an error, so a caller with a weak
-    judge silently measures nothing. That is a defect worth fixing
-    independently of which model is used.
+      1. |What was the command executed at step 27?|ran command 27|
 
-To complete: run with a capable judge.
-    distil-probe <session.jsonl> --probes 6 --model <model>
-Substitute a Claude-backed Summarizer for RawOllama in src/bin/probe_run.rs.
+  Field zero was '1. ', which matched no ProbeType, so the line was skipped.
+  Every line was skipped. generate_probes returned an empty vector, and an
+  empty vector is not an error, so the caller measured nothing and could not
+  tell that apart from a context with nothing worth asking.
 
-Until then the LLM-free number stands as the retention evidence:
-bench/results/artifact-retention.txt — 90.3% artifact retention, 9/12
-sessions perfect, measured against ground truth with no judge.
+  Fixed on both sides, with regression tests built from the exact model
+  output: the parser strips list markers and surrounding pipes, and the
+  generation prompt carries a worked example and forbids numbering, because
+  the same model also dropped the TYPE field when given only an abstract
+  format. 113 tests pass.
+
+  Also fixed: the mock summarizer branched on the literal word "generate" in
+  the prompt, so rewording the prompt mis-routed it to the grading response
+  and failed a test for a reason unrelated to its subject.
+
+WHAT IS STILL MISSING
+  A retention percentage. The judge is the constraint, not the harness:
+  this machine has no Anthropic credentials, and ollama qwen2.5:3b needs
+  about 46 seconds per call at 1,541 prompt tokens. One session is nine
+  calls across the compressed and control conditions.
+
+  To finish, substitute a Claude-backed Summarizer for RawOllama in
+  src/bin/probe_run.rs and run:
+      distil-probe <session.jsonl> --probes 6 --model <model>
+
+MEASURED ALONGSIDE
+  distil's MaskingLayer on real sessions:
+      15 messages    3,070 -> 660    78.5% saved
+     100 messages   17,974 -> 9,053  49.6% saved
+
+THE RETENTION EVIDENCE THAT DOES NOT NEED A JUDGE
+  bench/results/artifact-retention.txt — 90.3% artifact retention across 12
+  real sessions, 9 of 12 perfect, measured against ground truth.
