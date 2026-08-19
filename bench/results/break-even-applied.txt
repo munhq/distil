@@ -1,0 +1,8 @@
+leave alone : 0.1000 per turn (per unit of history)
+compressed  : 0.9735 first turn, then 0.0920
+  K=  10: keep=   1.000  compress=   1.801  -> keeping wins
+  K=  20: keep=   2.000  compress=   2.721  -> keeping wins
+  K=  50: keep=   5.000  compress=   5.479  -> keeping wins
+  K= 100: keep=  10.000  compress=  10.077  -> keeping wins
+  K= 110: keep=  11.000  compress=  10.996  -> compress wins
+  K= 150: keep=  15.000  compress=  14.675  -> compress wins
