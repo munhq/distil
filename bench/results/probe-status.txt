@@ -1,7 +1,23 @@
 distil-probe — LLM-graded retention
 
-STATUS: harness complete and its defect fixed; end-to-end run still executing
-on a saturated CPU with a 3B judge. Not yet a published number.
+STATUS: defect fixed and the fix CONFIRMED on real data — the same session
+that produced 0 probes before the fix now produces 4. The grading half is
+still executing on a saturated CPU with a 3B judge, so there is not yet a
+retention percentage.
+
+CONFIRMATION (session 2d3c0c63, 15 messages, 3,070 -> 660 tokens):
+  before the fix:  generated 0 probes  -> "no probes parsed"
+  after the fix:   generated 4 probes
+      [recall] What was done in session `fb0b404f-...`?
+      [recall] What architectural plan was evaluated in session `a18ba3bc-...`?
+      [recall] What was done in session `0a8737cb-...`?
+      [recall] What was done in session `2d3c0c63-...`?
+
+  Note the probes themselves are poor: all four are `recall`, none exercise
+  the artifact, continuation or decision types, and they ask about session
+  identifiers rather than about the work. That is the 3B judge, not the
+  harness — but it is the reason a retention number from this judge would
+  not be worth publishing even once the run completes.
 
 WHAT WAS PROVEN
   A real defect, found by running the thing rather than reading it.
