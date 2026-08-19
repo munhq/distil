@@ -137,10 +137,7 @@ impl ResultMasker {
             retain_turns_assistant: None,
             max_result_tokens: None,
             json_truncate: Some(JsonTruncateConfig::default()),
-            patterns: vec![
-                ResultPattern::xml_tags(),
-                ResultPattern::bracketed(),
-            ],
+            patterns: vec![ResultPattern::xml_tags(), ResultPattern::bracketed()],
         }
     }
 
@@ -244,7 +241,9 @@ impl ResultMasker {
                                 let truncated_val = truncate_json_value(&parsed, jt_config, 0);
                                 if let Ok(truncated_str) = serde_json::to_string(&truncated_val) {
                                     let truncated_tokens = counter.count(&truncated_str);
-                                    let savings_pct = if original_tokens > 0 && truncated_tokens < original_tokens {
+                                    let savings_pct = if original_tokens > 0
+                                        && truncated_tokens < original_tokens
+                                    {
                                         ((original_tokens - truncated_tokens) as f64
                                             / original_tokens as f64)
                                             * 100.0
@@ -334,10 +333,8 @@ impl ResultPattern {
     /// Pattern for bracket-style results: `[Tool: name]\noutput\n[/Tool]`
     pub fn bracketed() -> Self {
         Self {
-            regex: Regex::new(
-                r#"(?s)\[Tool:\s*(?P<name>[^\]]+)\]\s*(?P<output>.*?)\s*\[/Tool\]"#,
-            )
-            .expect("bracketed regex is valid"),
+            regex: Regex::new(r#"(?s)\[Tool:\s*(?P<name>[^\]]+)\]\s*(?P<output>.*?)\s*\[/Tool\]"#)
+                .expect("bracketed regex is valid"),
             replacement_fmt: "[{name} → {tokens} tokens, masked]".into(),
         }
     }
@@ -362,19 +359,15 @@ impl ResultPattern {
         let mut result = content.to_string();
         let mut total_saved = 0;
 
-        // Process all matches (we re-match after each replacement since offsets shift)
-        loop {
-            let Some(caps) = self.regex.captures(&result) else {
-                break;
-            };
-
+        // Re-match after each replacement, because every substitution shifts the
+        // offsets of everything after it.
+        while let Some(caps) = self.regex.captures(&result) {
             let full_match = caps.get(0).unwrap();
             let name = caps.name("name").map(|m| m.as_str()).unwrap_or("unknown");
             let output = caps.name("output").map(|m| m.as_str()).unwrap_or("");
 
             let output_tokens = counter.count(output);
-            let should_mask =
-                mask_by_age || max_tokens.is_some_and(|max| output_tokens > max);
+            let should_mask = mask_by_age || max_tokens.is_some_and(|max| output_tokens > max);
 
             if !should_mask {
                 break;

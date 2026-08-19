@@ -66,17 +66,17 @@ impl Ctx {
 
     /// Total tokens in the current state.
     pub fn total_tokens(&self, counter: &dyn TokenCounter) -> usize {
-        let msg_tokens: usize = self.messages.iter().map(|m| counter.count(&m.content)).sum();
+        let msg_tokens: usize = self
+            .messages
+            .iter()
+            .map(|m| counter.count(&m.content))
+            .sum();
         let tool_tokens: usize = self
             .tools
             .iter()
             .map(|t| counter.count(&t.to_prompt_text()))
             .sum();
-        let catalog_tokens = self
-            .catalog
-            .as_ref()
-            .map(|c| counter.count(c))
-            .unwrap_or(0);
+        let catalog_tokens = self.catalog.as_ref().map(|c| counter.count(c)).unwrap_or(0);
         msg_tokens + tool_tokens + catalog_tokens
     }
 
@@ -154,7 +154,11 @@ impl std::fmt::Display for LayerResult {
                 self.detail
             )
         } else {
-            write!(f, "[{}] {} tokens (no change) [{:.1}ms] — {}", self.layer, self.tokens_before, ms, self.detail)
+            write!(
+                f,
+                "[{}] {} tokens (no change) [{:.1}ms] — {}",
+                self.layer, self.tokens_before, ms, self.detail
+            )
         }
     }
 }
@@ -185,17 +189,15 @@ pub trait Layer: Send + Sync {
 
     /// Declare this layer's execution phase for ordering validation.
     /// Returns `None` by default (no ordering constraint).
-    fn phase(&self) -> Option<Phase> { None }
+    fn phase(&self) -> Option<Phase> {
+        None
+    }
 
     /// Handle a tool call that this layer injected into the context.
     ///
     /// Returns `Some(output)` if this layer owns the tool, `None` otherwise.
     /// The caller should include the output in the conversation.
-    fn handle_tool_call(
-        &self,
-        _tool_name: &str,
-        _args: &serde_json::Value,
-    ) -> Option<String> {
+    fn handle_tool_call(&self, _tool_name: &str, _args: &serde_json::Value) -> Option<String> {
         None
     }
 }
@@ -298,11 +300,7 @@ impl Pipeline {
     ///
     /// When the LLM calls a tool that distil injected (e.g., `tool_search`,
     /// `scratchpad_write`), pass it here. Returns the tool output if handled.
-    pub fn handle_tool_call(
-        &self,
-        tool_name: &str,
-        args: &serde_json::Value,
-    ) -> Option<String> {
+    pub fn handle_tool_call(&self, tool_name: &str, args: &serde_json::Value) -> Option<String> {
         for layer in &self.layers {
             if let Some(result) = layer.handle_tool_call(tool_name, args) {
                 return Some(result);
@@ -348,7 +346,11 @@ impl Pipeline {
 /// ```
 pub trait ToolExecutor: Send + Sync {
     /// Execute a tool call and return the output as a string.
-    fn execute(&self, tool_name: &str, args: &serde_json::Value) -> std::result::Result<String, crate::Error>;
+    fn execute(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> std::result::Result<String, crate::Error>;
 }
 
 pub struct PipelineBuilder {
@@ -390,7 +392,9 @@ impl PipelineBuilder {
                     if phase < prev {
                         warnings.push(format!(
                             "'{}' ({:?}) comes after a {:?}-phase layer",
-                            layer.name(), phase, prev
+                            layer.name(),
+                            phase,
+                            prev
                         ));
                     }
                 }
@@ -430,7 +434,10 @@ mod tests {
         assert!(ctx.get::<LayerState>().is_none());
 
         // Insert
-        ctx.insert(LayerState { processed: true, count: 42 });
+        ctx.insert(LayerState {
+            processed: true,
+            count: 42,
+        });
         let state = ctx.get::<LayerState>().unwrap();
         assert!(state.processed);
         assert_eq!(state.count, 42);

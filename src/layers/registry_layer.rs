@@ -74,7 +74,9 @@ impl Layer for RegistryLayer {
                     ctx.catalog = Some(cached.clone());
                     ctx.tools = vec![self.registry.search_tool_spec()];
                     #[cfg(feature = "code-mode")]
-                    ctx.insert(crate::registry::ToolTypeScriptDefs(self.registry.to_typescript_defs()));
+                    ctx.insert(crate::registry::ToolTypeScriptDefs(
+                        self.registry.to_typescript_defs(),
+                    ));
                     let tokens_after = ctx.total_tokens(counter);
                     return LayerResult {
                         layer: self.name().into(),
@@ -96,7 +98,9 @@ impl Layer for RegistryLayer {
 
         // Pre-compute TS defs for CodeModeLayer
         #[cfg(feature = "code-mode")]
-        ctx.insert(crate::registry::ToolTypeScriptDefs(self.registry.to_typescript_defs()));
+        ctx.insert(crate::registry::ToolTypeScriptDefs(
+            self.registry.to_typescript_defs(),
+        ));
 
         // Update optimization state with cached catalog
         let cached_catalog = ctx.catalog.clone();
@@ -112,25 +116,16 @@ impl Layer for RegistryLayer {
             tokens_before,
             tokens_after,
             duration: Duration::ZERO,
-            detail: format!(
-                "{tool_count} tools: {full_tokens} → {catalog_tokens} catalog tokens"
-            ),
+            detail: format!("{tool_count} tools: {full_tokens} → {catalog_tokens} catalog tokens"),
         }
     }
 
-    fn handle_tool_call(
-        &self,
-        tool_name: &str,
-        args: &serde_json::Value,
-    ) -> Option<String> {
+    fn handle_tool_call(&self, tool_name: &str, args: &serde_json::Value) -> Option<String> {
         if tool_name != "tool_search" {
             return None;
         }
 
-        let query = args
-            .get("query")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
 
         let detail = args
             .get("detail")
@@ -140,7 +135,9 @@ impl Layer for RegistryLayer {
         let results = self.registry.search(query, 5);
 
         if results.is_empty() {
-            return Some(format!("No tools found matching \"{query}\". Try different keywords."));
+            return Some(format!(
+                "No tools found matching \"{query}\". Try different keywords."
+            ));
         }
 
         Some(self.registry.format_results(&results, detail))

@@ -25,20 +25,21 @@
 use std::sync::Arc;
 
 use rmcp::{
+    ErrorData as McpError, ServerHandler,
     handler::server::router::tool::ToolRouter,
     handler::server::wrapper::Parameters,
     model::{CallToolResult, Content, ServerCapabilities},
-    tool, tool_router, tool_handler, ErrorData as McpError, ServerHandler,
     service::ServiceExt,
+    tool, tool_handler, tool_router,
     transport::stdio,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 use distil::{
+    Layer,
     counter::EstimateCounter,
     layers::*,
-    Layer,
     pipeline::{Ctx, Pipeline},
     types::{Message, Role, ToolSpec},
 };
@@ -102,7 +103,10 @@ fn to_distil_messages(msgs: &[McpMessage]) -> Vec<Message> {
                 "tool" => Role::Tool,
                 _ => Role::User,
             };
-            Message { role, content: m.content.clone() }
+            Message {
+                role,
+                content: m.content.clone(),
+            }
         })
         .collect()
 }
@@ -140,7 +144,9 @@ impl DistilServer {
         }
     }
 
-    #[tool(description = "Optimize conversation context for LLM token efficiency. Takes messages and tool definitions, returns optimized context with metrics. Typically saves 50-90% of tokens.")]
+    #[tool(
+        description = "Optimize conversation context for LLM token efficiency. Takes messages and tool definitions, returns optimized context with metrics. Typically saves 50-90% of tokens."
+    )]
     async fn optimize(
         &self,
         Parameters(request): Parameters<OptimizeRequest>,
@@ -149,9 +155,9 @@ impl DistilServer {
         let messages = to_distil_messages(&request.messages);
         let tool_specs = to_distil_tools(&request.tools);
 
-        let turn = request.turn.unwrap_or_else(|| {
-            messages.iter().filter(|m| m.role == Role::User).count() as u32
-        });
+        let turn = request
+            .turn
+            .unwrap_or_else(|| messages.iter().filter(|m| m.role == Role::User).count() as u32);
 
         // Build pipeline
         let mut builder = Pipeline::builder().counter(EstimateCounter);
@@ -223,7 +229,9 @@ impl DistilServer {
         )]))
     }
 
-    #[tool(description = "Handle a distil-injected tool call (tool_search, note_read, note_write). When distil optimizes your tools, it injects meta-tools. Route those calls here.")]
+    #[tool(
+        description = "Handle a distil-injected tool call (tool_search, note_read, note_write). When distil optimizes your tools, it injects meta-tools. Route those calls here."
+    )]
     async fn tool_call(
         &self,
         Parameters(request): Parameters<ToolCallRequest>,
@@ -240,7 +248,9 @@ impl DistilServer {
             let counter = EstimateCounter;
             let tool_specs = to_distil_tools(&request.tools);
             let registry = RegistryLayer::new(tool_specs, &counter);
-            if let Some(output) = Layer::handle_tool_call(&registry, &request.name, &request.arguments) {
+            if let Some(output) =
+                Layer::handle_tool_call(&registry, &request.name, &request.arguments)
+            {
                 return Ok(CallToolResult::success(vec![Content::text(output)]));
             }
         }
@@ -274,7 +284,10 @@ impl ServerHandler for DistilServer {
 #[tokio::main]
 async fn main() {
     // MCP servers must not write to stdout (it's the JSON-RPC channel)
-    eprintln!("distil-mcp v{} starting (stdio transport)", env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "distil-mcp v{} starting (stdio transport)",
+        env!("CARGO_PKG_VERSION")
+    );
 
     let server = DistilServer::new();
     let service = match server.serve(stdio()).await {

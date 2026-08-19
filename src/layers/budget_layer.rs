@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use crate::counter::TokenCounter;
 use crate::budget::TokenBudget;
+use crate::counter::TokenCounter;
 use crate::pipeline::{Ctx, Layer, LayerResult};
 
 /// Trims oldest messages to fit within a token budget.

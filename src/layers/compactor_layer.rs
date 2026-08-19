@@ -237,8 +237,8 @@ mod tests {
         let messages = vec![
             Message::user("hello"),
             Message::assistant("hi"),
-            Message::user("hello"),  // duplicate
-            Message::assistant("hi"),  // duplicate
+            Message::user("hello"),   // duplicate
+            Message::assistant("hi"), // duplicate
         ];
 
         let deduped = dedup_messages(&messages, 5);
@@ -256,9 +256,9 @@ mod tests {
         let mut ctx = Ctx::new(
             vec![
                 Message::system("You are helpful."),
-                Message::user("ok"),  // ~1 token, below threshold
+                Message::user("ok"), // ~1 token, below threshold
                 Message::assistant("I understand."),
-                Message::user(""),  // empty
+                Message::user(""), // empty
                 Message::assistant("Sure, let me help with that task."),
             ],
             vec![],
@@ -269,7 +269,11 @@ mod tests {
 
         // System preserved, empty/tiny user messages removed
         assert!(ctx.messages.iter().any(|m| m.role == Role::System));
-        assert!(ctx.messages.iter().all(|m| !m.content.is_empty() || m.role == Role::System));
+        assert!(
+            ctx.messages
+                .iter()
+                .all(|m| !m.content.is_empty() || m.role == Role::System)
+        );
     }
 
     #[test]
@@ -283,8 +287,8 @@ mod tests {
                 Message::system("Be helpful."),
                 Message::user("do thing"),
                 Message::assistant(&verbose_content),
-                Message::user("do thing"),  // duplicate
-                Message::assistant(&verbose_content),  // duplicate
+                Message::user("do thing"),            // duplicate
+                Message::assistant(&verbose_content), // duplicate
                 Message::user("now what?"),
             ],
             vec![],

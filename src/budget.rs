@@ -40,7 +40,8 @@ impl TokenBudget {
             breakdown.tools += counter.count(&tool.to_prompt_text());
         }
 
-        breakdown.total = breakdown.system + breakdown.tools + breakdown.history + breakdown.tool_results;
+        breakdown.total =
+            breakdown.system + breakdown.tools + breakdown.history + breakdown.tool_results;
         breakdown
     }
 
@@ -65,12 +66,16 @@ impl TokenBudget {
         counter: &dyn TokenCounter,
         preserve_recent: usize,
     ) -> (Vec<Message>, usize) {
-        let tool_tokens: usize = tools.iter().map(|t| counter.count(&t.to_prompt_text())).sum();
+        let tool_tokens: usize = tools
+            .iter()
+            .map(|t| counter.count(&t.to_prompt_text()))
+            .sum();
         let target = self.max_tokens.saturating_sub(tool_tokens);
 
         // Separate system messages (always kept) from the rest
         let system: Vec<&Message> = messages.iter().filter(|m| m.role == Role::System).collect();
-        let non_system: Vec<&Message> = messages.iter().filter(|m| m.role != Role::System).collect();
+        let non_system: Vec<&Message> =
+            messages.iter().filter(|m| m.role != Role::System).collect();
 
         let system_tokens: usize = system.iter().map(|m| counter.count(&m.content)).sum();
         let available = target.saturating_sub(system_tokens);

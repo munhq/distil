@@ -238,7 +238,10 @@ impl<S: Summarizer + 'static> Layer for SummarizationLayer<S> {
         }
 
         // Call the summarizer
-        let summary = match self.summarizer.summarize(&old_content, self.max_summary_tokens) {
+        let summary = match self
+            .summarizer
+            .summarize(&old_content, self.max_summary_tokens)
+        {
             Ok(s) => s,
             Err(e) => {
                 return LayerResult {
@@ -269,7 +272,9 @@ impl<S: Summarizer + 'static> Layer for SummarizationLayer<S> {
         );
 
         // Update summarization state
-        ctx.insert(SummarizationState { last_summarized_turn: ctx.turn });
+        ctx.insert(SummarizationState {
+            last_summarized_turn: ctx.turn,
+        });
 
         let tokens_after = ctx.total_tokens(counter);
 
@@ -368,7 +373,10 @@ mod tests {
         assert!(has_summary, "should have injected summary message");
 
         // Recent messages should be untouched
-        let has_rate_limiting = ctx.messages.iter().any(|m| m.content.contains("rate limiting"));
+        let has_rate_limiting = ctx
+            .messages
+            .iter()
+            .any(|m| m.content.contains("rate limiting"));
         assert!(has_rate_limiting, "recent messages should be preserved");
 
         // Old messages should be gone
@@ -379,7 +387,9 @@ mod tests {
         assert!(!has_auth_module, "old messages should be removed");
 
         // SummarizationState should be updated
-        let state = ctx.get::<SummarizationState>().expect("state should be set after summarization");
+        let state = ctx
+            .get::<SummarizationState>()
+            .expect("state should be set after summarization");
         assert_eq!(state.last_summarized_turn, 3);
     }
 
@@ -406,8 +416,16 @@ mod tests {
         let original_len = ctx.messages.len();
         let result = layer.apply(&mut ctx, &counter);
 
-        assert_eq!(ctx.messages.len(), original_len, "messages should be unchanged");
-        assert!(result.detail.contains("too small"), "detail: {}", result.detail);
+        assert_eq!(
+            ctx.messages.len(),
+            original_len,
+            "messages should be unchanged"
+        );
+        assert!(
+            result.detail.contains("too small"),
+            "detail: {}",
+            result.detail
+        );
     }
 
     #[test]
@@ -433,7 +451,11 @@ mod tests {
         let original_len = ctx.messages.len();
         let result = layer.apply(&mut ctx, &counter);
 
-        assert_eq!(ctx.messages.len(), original_len, "messages unchanged on failure");
+        assert_eq!(
+            ctx.messages.len(),
+            original_len,
+            "messages unchanged on failure"
+        );
         assert!(
             result.detail.contains("failed"),
             "detail should mention failure: {}",
@@ -504,7 +526,11 @@ mod tests {
             1,
         );
         let result = layer.apply(&mut ctx, &counter);
-        assert!(result.detail.contains("skipped"), "should skip at turn 1: {}", result.detail);
+        assert!(
+            result.detail.contains("skipped"),
+            "should skip at turn 1: {}",
+            result.detail
+        );
 
         // Turn 3 — should summarize (3-0=3 >= 3)
         let mut ctx2 = Ctx::new(
@@ -522,7 +548,11 @@ mod tests {
             3,
         );
         let result2 = layer.apply(&mut ctx2, &counter);
-        assert!(result2.tokens_saved() > 0, "should summarize at turn 3: {}", result2.detail);
+        assert!(
+            result2.tokens_saved() > 0,
+            "should summarize at turn 3: {}",
+            result2.detail
+        );
 
         // Turn 4 with state showing last summarized at 3 — should skip (4-3=1 < 3)
         let mut ctx3 = Ctx::new(
@@ -535,9 +565,15 @@ mod tests {
             vec![],
             4,
         );
-        ctx3.insert(SummarizationState { last_summarized_turn: 3 });
+        ctx3.insert(SummarizationState {
+            last_summarized_turn: 3,
+        });
         let result3 = layer.apply(&mut ctx3, &counter);
-        assert!(result3.detail.contains("skipped"), "should skip at turn 4: {}", result3.detail);
+        assert!(
+            result3.detail.contains("skipped"),
+            "should skip at turn 4: {}",
+            result3.detail
+        );
     }
 
     #[test]
@@ -560,8 +596,15 @@ mod tests {
         );
 
         let result = layer.apply(&mut ctx, &counter);
-        assert!(result.detail.contains("async"), "should be async: {}", result.detail);
-        assert!(ctx.get::<PendingSummarization>().is_some(), "should have pending");
+        assert!(
+            result.detail.contains("async"),
+            "should be async: {}",
+            result.detail
+        );
+        assert!(
+            ctx.get::<PendingSummarization>().is_some(),
+            "should have pending"
+        );
     }
 
     #[test]
@@ -581,10 +624,15 @@ mod tests {
             vec![],
             2,
         );
-        ctx.insert(CompletedSummary("Auth module was built. Tests pass.".into()));
+        ctx.insert(CompletedSummary(
+            "Auth module was built. Tests pass.".into(),
+        ));
 
         let _result = layer.apply(&mut ctx, &counter);
-        let has_summary = ctx.messages.iter().any(|m| m.content.contains("Auth module was built"));
+        let has_summary = ctx
+            .messages
+            .iter()
+            .any(|m| m.content.contains("Auth module was built"));
         assert!(has_summary, "should have injected completed summary");
     }
 }

@@ -19,7 +19,7 @@
 
 use std::collections::HashMap;
 
-use crate::summarizer::Summarizer;
+use crate::summarizer::Completer;
 use crate::types::Message;
 
 /// Type of probe question.
@@ -132,18 +132,22 @@ impl std::fmt::Display for ProbeReport {
 ///     // compression is too aggressive
 /// }
 /// ```
-pub struct ProbeEvaluator<S: Summarizer> {
-    evaluator: S,
+pub struct ProbeEvaluator<C: Completer> {
+    evaluator: C,
     num_probes: usize,
     threshold: f64,
+    max_context_chars: usize,
 }
 
-impl<S: Summarizer> ProbeEvaluator<S> {
-    pub fn new(evaluator: S) -> Self {
+impl<C: Completer> ProbeEvaluator<C> {
+    pub fn new(evaluator: C) -> Self {
         Self {
             evaluator,
             num_probes: 5,
             threshold: 0.8,
+            // ~6k tokens of context. Small enough for a modest local judge,
+            // large enough to carry a session's decisions and its last actions.
+            max_context_chars: 24_000,
         }
     }
 
@@ -161,13 +165,58 @@ impl<S: Summarizer> ProbeEvaluator<S> {
         self.threshold
     }
 
-    /// Generate probe questions from the original (uncompressed) context.
-    pub fn generate_probes(&self, original: &[Message]) -> crate::error::Result<Vec<Probe>> {
-        let context = original
+    /// Maximum characters of context sent to the judge in one prompt.
+    ///
+    /// A real session runs to hundreds of thousands of characters, and a judge
+    /// handed all of it at once returns nothing usable — that failure looked
+    /// like a format problem until the context was cut down and the same model
+    /// complied immediately.
+    pub fn max_context_chars(mut self, n: usize) -> Self {
+        self.max_context_chars = n;
+        self
+    }
+
+    /// Render messages as text, keeping the HEAD and TAIL when too long.
+    ///
+    /// The middle is dropped rather than the end. Probes must cover what the
+    /// session decided and what it did last; truncating to the first N
+    /// characters would generate questions only about the opening, which the
+    /// compressed context nearly always still contains — the measurement would
+    /// then flatter every compressor.
+    fn render(&self, messages: &[Message]) -> String {
+        let full = messages
             .iter()
             .map(|m| format!("[{}]: {}", m.role_str(), m.content))
             .collect::<Vec<_>>()
             .join("\n");
+        if full.len() <= self.max_context_chars {
+            return full;
+        }
+        let half = self.max_context_chars / 2;
+        // Split on char boundaries, never bytes, or a multi-byte character
+        // straddling the cut panics.
+        let head_end = full
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= half)
+            .last()
+            .unwrap_or(0);
+        let tail_start = full
+            .char_indices()
+            .map(|(i, _)| i)
+            .find(|&i| i >= full.len().saturating_sub(half))
+            .unwrap_or(full.len());
+        format!(
+            "{}\n\n[... {} characters of the middle omitted ...]\n\n{}",
+            &full[..head_end],
+            tail_start - head_end,
+            &full[tail_start..]
+        )
+    }
+
+    /// Generate probe questions from the original (uncompressed) context.
+    pub fn generate_probes(&self, original: &[Message]) -> crate::error::Result<Vec<Probe>> {
+        let context = self.render(original);
 
         // The example line and the prohibitions are load-bearing. Without them
         // models answer with a numbered list and drop the TYPE field, which
@@ -191,8 +240,17 @@ impl<S: Summarizer> ProbeEvaluator<S> {
             self.num_probes, context, self.num_probes
         );
 
-        let response = self.evaluator.summarize(&prompt, 500)?;
-        Self::parse_probes(&response)
+        let response = self.evaluator.complete(&prompt, 500)?;
+        let probes = Self::parse_probes(&response)?;
+        if probes.is_empty() {
+            // A caller cannot act on an empty vector: it means both "nothing to
+            // ask" and "the judge ignored the format", and only one of those is
+            // a valid measurement.
+            return Err(crate::error::Error::NoProbesParsed {
+                lines: response.lines().filter(|l| !l.trim().is_empty()).count(),
+            });
+        }
+        Ok(probes)
     }
 
     /// Check if the compressed context can answer the probe questions.
@@ -201,11 +259,7 @@ impl<S: Summarizer> ProbeEvaluator<S> {
         compressed: &[Message],
         probes: &[Probe],
     ) -> crate::error::Result<ProbeReport> {
-        let context = compressed
-            .iter()
-            .map(|m| format!("[{}]: {}", m.role_str(), m.content))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let context = self.render(compressed);
 
         let mut results = Vec::new();
         for probe in probes {
@@ -218,7 +272,7 @@ impl<S: Summarizer> ProbeEvaluator<S> {
                 context, probe.question
             );
 
-            let answer = self.evaluator.summarize(&prompt, 100)?;
+            let answer = self.evaluator.complete(&prompt, 100)?;
             let passed = Self::check_answer(&answer, &probe.expected);
             results.push(ProbeResult {
                 probe: probe.clone(),
@@ -263,7 +317,8 @@ impl<S: Summarizer> ProbeEvaluator<S> {
                 let digits = line.chars().take_while(|c| c.is_ascii_digit()).count();
                 if digits > 0 && digits < line.len() {
                     let after = &line[digits..];
-                    if let Some(rest) = after.strip_prefix('.').or_else(|| after.strip_prefix(')')) {
+                    if let Some(rest) = after.strip_prefix('.').or_else(|| after.strip_prefix(')'))
+                    {
                         line = rest.trim_start();
                     }
                 }
@@ -329,8 +384,8 @@ mod tests {
         evaluate_response: String,
     }
 
-    impl crate::Summarizer for MockEvaluator {
-        fn summarize(&self, content: &str, _max_tokens: usize) -> crate::error::Result<String> {
+    impl Completer for MockEvaluator {
+        fn complete(&self, content: &str, _max_tokens: usize) -> crate::error::Result<String> {
             // Branch on the format specification, which only the generation
             // prompt carries. An earlier version sniffed for the word
             // "generate" and silently mis-routed the moment that prompt was
@@ -422,7 +477,9 @@ mod tests {
     #[test]
     fn evaluate_with_mock() {
         let evaluator = ProbeEvaluator::new(MockEvaluator {
-            generate_response: "recall|What was the exit code?|0\nartifact|What file was created?|src/auth.rs".into(),
+            generate_response:
+                "recall|What was the exit code?|0\nartifact|What file was created?|src/auth.rs"
+                    .into(),
             evaluate_response: "The exit code was 0 and src/auth.rs was created".into(),
         })
         .num_probes(2);
@@ -447,9 +504,9 @@ mod tests {
 mod parse_tolerance_tests {
     use super::*;
 
-    struct NullSummarizer;
-    impl Summarizer for NullSummarizer {
-        fn summarize(&self, _c: &str, _m: usize) -> crate::error::Result<String> {
+    struct NullCompleter;
+    impl Completer for NullCompleter {
+        fn complete(&self, _p: &str, _m: usize) -> crate::error::Result<String> {
             Ok(String::new())
         }
     }
@@ -466,8 +523,7 @@ Here are 4 factual questions based on the conversation:
 2. |artifact|Which file was modified?|src/auth.rs
 - decision|Why was Postgres chosen?|for the JSONB support
 ";
-        let probes = ProbeEvaluator::<NullSummarizer>::parse_probes(response)
-            .unwrap();
+        let probes = ProbeEvaluator::<NullCompleter>::parse_probes(response).unwrap();
         assert_eq!(probes.len(), 3, "got {probes:?}");
         assert_eq!(probes[0].probe_type, ProbeType::Recall);
         assert_eq!(probes[1].probe_type, ProbeType::Artifact);
@@ -483,10 +539,73 @@ recall|What failed?|the build
 this line is prose and must not become a probe
 continuation|What is next?|fix the type error
 ";
-        let probes = ProbeEvaluator::<NullSummarizer>::parse_probes(response)
-            .unwrap();
+        let probes = ProbeEvaluator::<NullCompleter>::parse_probes(response).unwrap();
         assert_eq!(probes.len(), 2);
         assert_eq!(probes[0].probe_type, ProbeType::Recall);
         assert_eq!(probes[1].probe_type, ProbeType::Continuation);
+    }
+}
+
+#[cfg(test)]
+mod robustness_tests {
+    use super::*;
+
+    struct Canned(String);
+    impl Completer for Canned {
+        fn complete(&self, _p: &str, _m: usize) -> crate::error::Result<String> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn no_parseable_probes_is_an_error_not_an_empty_success() {
+        // A judge that ignores the format used to yield Ok(vec![]), which a
+        // caller cannot distinguish from a context with nothing worth asking.
+        let ev = ProbeEvaluator::new(Canned(
+            "Sure! Here are some questions about the conversation.".into(),
+        ));
+        let msgs = vec![Message::user("hello")];
+        match ev.generate_probes(&msgs) {
+            Err(crate::error::Error::NoProbesParsed { lines }) => assert_eq!(lines, 1),
+            other => panic!("expected NoProbesParsed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn long_context_keeps_head_and_tail() {
+        let ev = ProbeEvaluator::new(Canned(String::new())).max_context_chars(400);
+        let msgs = vec![
+            Message::user("FIRST_MARKER open the project"),
+            Message::assistant("x".repeat(5_000)),
+            Message::assistant("LAST_MARKER done"),
+        ];
+        let rendered = ev.render(&msgs);
+        assert!(rendered.len() < 1_000, "len was {}", rendered.len());
+        // Both ends must survive: probes drawn only from the opening would ask
+        // about content every compressor keeps, flattering all of them.
+        assert!(rendered.contains("FIRST_MARKER"));
+        assert!(rendered.contains("LAST_MARKER"));
+        assert!(rendered.contains("omitted"));
+    }
+
+    #[test]
+    fn short_context_is_untouched() {
+        let ev = ProbeEvaluator::new(Canned(String::new()));
+        let msgs = vec![Message::user("small"), Message::assistant("also small")];
+        let rendered = ev.render(&msgs);
+        assert!(!rendered.contains("omitted"));
+        assert!(rendered.contains("small"));
+    }
+
+    #[test]
+    fn multibyte_context_does_not_panic_at_the_cut() {
+        // Slicing on a byte offset inside a multi-byte character panics.
+        let ev = ProbeEvaluator::new(Canned(String::new())).max_context_chars(120);
+        let msgs = vec![
+            Message::user("é".repeat(500)),
+            Message::assistant("日本語テキスト".repeat(200)),
+        ];
+        let rendered = ev.render(&msgs);
+        assert!(rendered.contains("omitted"));
     }
 }

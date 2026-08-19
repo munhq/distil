@@ -173,7 +173,8 @@ impl Layer for ScratchpadLayer {
                 sys_msg.content.push_str("\n\n");
                 sys_msg.content.push_str(&summary);
             } else {
-                ctx.messages.insert(0, crate::types::Message::system(summary));
+                ctx.messages
+                    .insert(0, crate::types::Message::system(summary));
             }
         }
 
@@ -189,11 +190,7 @@ impl Layer for ScratchpadLayer {
         }
     }
 
-    fn handle_tool_call(
-        &self,
-        tool_name: &str,
-        args: &serde_json::Value,
-    ) -> Option<String> {
+    fn handle_tool_call(&self, tool_name: &str, args: &serde_json::Value) -> Option<String> {
         match tool_name {
             "note_write" => {
                 let key = args.get("key")?.as_str()?;
@@ -253,11 +250,7 @@ mod tests {
         let pad = ScratchpadLayer::new();
         pad.set("plan".into(), "Fix the auth module".into());
 
-        let mut ctx = Ctx::new(
-            vec![Message::system("You are helpful.")],
-            vec![],
-            0,
-        );
+        let mut ctx = Ctx::new(vec![Message::system("You are helpful.")], vec![], 0);
 
         pad.apply(&mut ctx, &counter);
 
@@ -285,23 +278,20 @@ mod tests {
         assert!(result.unwrap().contains("Saved"));
 
         // Read
-        let result = pad.handle_tool_call(
-            "note_read",
-            &serde_json::json!({"key": "test"}),
-        );
+        let result = pad.handle_tool_call("note_read", &serde_json::json!({"key": "test"}));
         assert_eq!(result.unwrap(), "hello world");
 
         // List
-        let result = pad.handle_tool_call(
-            "note_read",
-            &serde_json::json!({}),
-        );
+        let result = pad.handle_tool_call("note_read", &serde_json::json!({}));
         assert!(result.unwrap().contains("test"));
     }
 
     #[test]
     fn ignores_unrelated_tool_calls() {
         let pad = ScratchpadLayer::new();
-        assert!(pad.handle_tool_call("shell", &serde_json::json!({})).is_none());
+        assert!(
+            pad.handle_tool_call("shell", &serde_json::json!({}))
+                .is_none()
+        );
     }
 }

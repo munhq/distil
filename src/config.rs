@@ -157,9 +157,13 @@ pub struct CodeModeConfig {
 }
 
 #[cfg(feature = "code-mode")]
-fn default_timeout_seconds() -> u64 { 10 }
+fn default_timeout_seconds() -> u64 {
+    10
+}
 #[cfg(feature = "code-mode")]
-fn default_memory_limit_mb() -> usize { 256 }
+fn default_memory_limit_mb() -> usize {
+    256
+}
 
 fn default_true() -> bool {
     true
@@ -520,11 +524,7 @@ mod tests {
 
     struct MockSummarizer;
     impl crate::summarizer::Summarizer for MockSummarizer {
-        fn summarize(
-            &self,
-            _content: &str,
-            _max_tokens: usize,
-        ) -> crate::error::Result<String> {
+        fn summarize(&self, _content: &str, _max_tokens: usize) -> crate::error::Result<String> {
             Ok("Summary of old conversation.".into())
         }
     }
