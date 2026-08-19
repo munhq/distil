@@ -169,13 +169,25 @@ impl<S: Summarizer> ProbeEvaluator<S> {
             .collect::<Vec<_>>()
             .join("\n");
 
+        // The example line and the prohibitions are load-bearing. Without them
+        // models answer with a numbered list and drop the TYPE field, which
+        // yields zero parseable probes — see `parse_probes` for the other half
+        // of this defence.
         let prompt = format!(
-            "Given this conversation, generate exactly {} factual questions with short answers.\n\
-             Each question should test whether key information is preserved.\n\
-             Format each as: TYPE|QUESTION|ANSWER\n\
-             Types: recall, artifact, continuation, decision\n\n\
+            "Given this conversation, write exactly {} factual questions with short answers.\n\
+             Each question must test whether key information survived compression.\n\n\
+             Output one question per line, in exactly this form:\n\
+             TYPE|QUESTION|ANSWER\n\n\
+             TYPE is one of: recall, artifact, continuation, decision\n\n\
+             Example of a correct line:\n\
+             recall|What was the exit code of the build?|1\n\n\
+             Rules:\n\
+             - Start every line with the TYPE word. Never omit it.\n\
+             - Do not number the lines.\n\
+             - Do not add bullets, headers, or any other text.\n\
+             - Use exactly two | characters per line.\n\n\
              Conversation:\n{}\n\n\
-             Generate {} questions:",
+             Write the {} lines now:",
             self.num_probes, context, self.num_probes
         );
 
@@ -228,10 +240,36 @@ impl<S: Summarizer> ProbeEvaluator<S> {
         self.evaluate_probes(compressed, &probes)
     }
 
+    /// Parse `TYPE|QUESTION|ANSWER` lines out of a model response.
+    ///
+    /// Tolerant on purpose. Models routinely wrap the requested format in a
+    /// numbered list and pad it with pipes — `1. |What failed?|E0308|` — and a
+    /// strict `splitn(3, '|')` reads the leading `1. ` as the type, matches no
+    /// variant, and drops every probe. The failure is silent, so the caller
+    /// measures nothing and believes it measured perfect retention.
+    ///
+    /// So leading list markers and surrounding pipes are stripped before the
+    /// type is matched. Lines that still carry no recognised type are counted
+    /// and returned to the caller rather than discarded quietly.
     fn parse_probes(response: &str) -> crate::error::Result<Vec<Probe>> {
         let mut probes = Vec::new();
         for line in response.lines() {
-            let line = line.trim();
+            let mut line = line.trim();
+
+            // Strip an ordered- or bulleted-list marker: "1. ", "2) ", "- ", "* ".
+            if let Some(rest) = line.strip_prefix(['-', '*']) {
+                line = rest.trim_start();
+            } else {
+                let digits = line.chars().take_while(|c| c.is_ascii_digit()).count();
+                if digits > 0 && digits < line.len() {
+                    let after = &line[digits..];
+                    if let Some(rest) = after.strip_prefix('.').or_else(|| after.strip_prefix(')')) {
+                        line = rest.trim_start();
+                    }
+                }
+            }
+            // Strip pipes used as table-style delimiters around the whole row.
+            line = line.trim_matches('|').trim();
             if line.is_empty() {
                 continue;
             }
@@ -293,7 +331,12 @@ mod tests {
 
     impl crate::Summarizer for MockEvaluator {
         fn summarize(&self, content: &str, _max_tokens: usize) -> crate::error::Result<String> {
-            if content.contains("generate") || content.contains("Generate") {
+            // Branch on the format specification, which only the generation
+            // prompt carries. An earlier version sniffed for the word
+            // "generate" and silently mis-routed the moment that prompt was
+            // reworded — the test then failed for a reason unrelated to the
+            // behaviour it covers.
+            if content.contains("TYPE|QUESTION|ANSWER") {
                 Ok(self.generate_response.clone())
             } else {
                 Ok(self.evaluate_response.clone())
@@ -397,5 +440,53 @@ mod tests {
         assert_eq!(report.results.len(), 2);
         // Both should pass because the evaluate_response contains the expected answers
         assert!(report.success_rate > 0.5);
+    }
+}
+
+#[cfg(test)]
+mod parse_tolerance_tests {
+    use super::*;
+
+    struct NullSummarizer;
+    impl Summarizer for NullSummarizer {
+        fn summarize(&self, _c: &str, _m: usize) -> crate::error::Result<String> {
+            Ok(String::new())
+        }
+    }
+
+    /// The exact output qwen2.5:3b produced against the original prompt. Every
+    /// line was silently discarded, so the evaluator reported zero probes and
+    /// the caller could not tell that from a context with nothing worth asking.
+    #[test]
+    fn numbered_list_with_padding_pipes_is_recovered() {
+        let response = "\
+Here are 4 factual questions based on the conversation:
+
+1. |recall|What was the command executed at step 27?|ran command 27
+2. |artifact|Which file was modified?|src/auth.rs
+- decision|Why was Postgres chosen?|for the JSONB support
+";
+        let probes = ProbeEvaluator::<NullSummarizer>::parse_probes(response)
+            .unwrap();
+        assert_eq!(probes.len(), 3, "got {probes:?}");
+        assert_eq!(probes[0].probe_type, ProbeType::Recall);
+        assert_eq!(probes[1].probe_type, ProbeType::Artifact);
+        assert_eq!(probes[2].probe_type, ProbeType::Decision);
+        assert_eq!(probes[1].question, "Which file was modified?");
+        assert_eq!(probes[1].expected, "src/auth.rs");
+    }
+
+    #[test]
+    fn plain_format_still_parses_and_prose_is_ignored() {
+        let response = "\
+recall|What failed?|the build
+this line is prose and must not become a probe
+continuation|What is next?|fix the type error
+";
+        let probes = ProbeEvaluator::<NullSummarizer>::parse_probes(response)
+            .unwrap();
+        assert_eq!(probes.len(), 2);
+        assert_eq!(probes[0].probe_type, ProbeType::Recall);
+        assert_eq!(probes[1].probe_type, ProbeType::Continuation);
     }
 }
