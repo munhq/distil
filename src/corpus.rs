@@ -75,6 +75,12 @@ pub struct Segment {
     pub text: String,
     /// Tool name, when the segment belongs to a tool call or its result.
     pub tool: Option<String>,
+    /// The call's serialized arguments, carried onto its RESULT too.
+    ///
+    /// A result on its own cannot say what was asked for, and the question is
+    /// what makes two tools comparable: `Read` of a path and an outline of the
+    /// same path answer the same request at different cost.
+    pub args: Option<String>,
 }
 
 /// Tokens the provider billed for one assistant turn.
@@ -179,6 +185,7 @@ impl Session {
 fn tool_result_segments(
     content: &serde_json::Value,
     tool: Option<String>,
+    args: Option<String>,
     out: &mut Vec<Segment>,
 ) {
     match content {
@@ -186,6 +193,7 @@ fn tool_result_segments(
             kind: SegmentKind::ToolResult,
             text: s.clone(),
             tool,
+            args,
         }),
         serde_json::Value::Array(items) => {
             for item in items {
@@ -195,6 +203,7 @@ fn tool_result_segments(
                         kind: SegmentKind::Image,
                         text: String::new(),
                         tool: tool.clone(),
+                        args: args.clone(),
                     }),
                     _ => {
                         // `text` and `tool_reference` both carry a text field.
@@ -203,6 +212,7 @@ fn tool_result_segments(
                                 kind: SegmentKind::ToolResult,
                                 text: t.to_string(),
                                 tool: tool.clone(),
+                                args: args.clone(),
                             });
                         }
                     }
@@ -227,7 +237,7 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
     // tool_use_id -> tool name, so a result can be attributed to its tool.
     // A call always precedes its result in the file, so one forward pass is
     // enough and no second read is needed.
-    let mut tool_use_names: std::collections::HashMap<String, String> =
+    let mut tool_use_names: std::collections::HashMap<String, (String, String)> =
         std::collections::HashMap::new();
     let mut usage = Vec::new();
     let mut assistant_turns = 0usize;
@@ -319,6 +329,7 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
                     kind,
                     text: s.clone(),
                     tool: None,
+                    args: None,
                 });
             }
             Some(serde_json::Value::Array(blocks)) => {
@@ -336,6 +347,7 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
                                 kind,
                                 text: t.to_string(),
                                 tool: None,
+                                args: None,
                             });
                         }
                         "thinking" => {
@@ -344,6 +356,7 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
                                 kind: SegmentKind::Thinking,
                                 text: t.to_string(),
                                 tool: None,
+                                args: None,
                             });
                         }
                         "tool_use" => {
@@ -359,12 +372,16 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
                                 .map(|v| v.to_string())
                                 .unwrap_or_else(|| "{}".to_string());
                             if let Some(id) = b.get("id").and_then(|v| v.as_str()) {
-                                tool_use_names.insert(id.to_string(), name.clone());
+                                tool_use_names.insert(
+                                    id.to_string(),
+                                    (name.clone(), args.clone()),
+                                );
                             }
                             segments.push(Segment {
                                 kind: SegmentKind::ToolUse,
-                                text: args,
+                                text: args.clone(),
                                 tool: Some(name),
+                                args: Some(args),
                             });
                         }
                         "tool_result" => {
@@ -373,12 +390,16 @@ pub fn load_session(path: &Path) -> std::io::Result<Session> {
                             // "which tool's OUTPUT costs the most" answerable —
                             // and output dwarfs arguments, so the unresolved
                             // form attributes the small half and drops the big.
-                            let tool = b
+                            let found = b
                                 .get("tool_use_id")
                                 .and_then(|v| v.as_str())
                                 .and_then(|id| tool_use_names.get(id).cloned());
+                            let (tool, args) = match found {
+                                Some((n, a)) => (Some(n), Some(a)),
+                                None => (None, None),
+                            };
                             if let Some(c) = b.get("content") {
-                                tool_result_segments(c, tool, &mut segments);
+                                tool_result_segments(c, tool, args, &mut segments);
                             }
                         }
                         _ => {}

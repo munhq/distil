@@ -28,6 +28,8 @@ mcp = ["dep:rmcp", "dep:tokio", "dep:schemars"]
 corpus = []
 # Enable the distil-bench measurement binary. Needs accurate token counts.
 bench = ["corpus", "tiktoken", "dep:rayon"]
+# Enable the distil-probe retention harness. Needs a Summarizer (Ollama).
+probe = ["corpus", "tiktoken", "proxy"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -77,6 +79,11 @@ required-features = ["mcp"]
 name = "distil-bench"
 path = "src/bin/bench.rs"
 required-features = ["bench"]
+
+[[bin]]
+name = "distil-probe"
+path = "src/bin/probe_run.rs"
+required-features = ["probe"]
 
 [dev-dependencies]
 pretty_assertions = "1"

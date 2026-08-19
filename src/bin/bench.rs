@@ -712,6 +712,7 @@ fn export_payloads(
                 "tool": tool,
                 "tokens": counter.count(&seg.text),
                 "text": seg.text,
+                "args": seg.args,
                 "pop_tokens": pop_tokens,
                 "pop_calls": pop_calls,
             });
