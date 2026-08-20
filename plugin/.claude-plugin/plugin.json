@@ -1,0 +1,18 @@
+{
+  "name": "distil",
+  "description": "Skills and MCP server for context optimization — decide whether compressing an agent's context pays for the prompt cache it invalidates, and compress it when the answer is yes. Bundles the distil MCP server so install wires everything in one step.",
+  "version": "0.1.0",
+  "author": {
+    "name": "munhq"
+  },
+  "homepage": "https://github.com/munhq/distil",
+  "repository": "https://github.com/munhq/distil",
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "context",
+    "tokens",
+    "prompt-cache",
+    "compression",
+    "mcp"
+  ]
+}

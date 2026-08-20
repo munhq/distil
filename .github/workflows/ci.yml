@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main, measurement]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: format
+        run: cargo fmt --all --check
+
+      # Every binary is feature-gated, so a default-feature clippy run would
+      # check almost nothing. --all-targets also covers examples, which is how
+      # the README snippet stays honest.
+      - name: clippy
+        run: cargo clippy --all-targets --features "bench probe mcp metrics config" -- -D warnings
+
+      - name: test
+        run: cargo test --features "bench probe mcp metrics config"
+
+      # The crate is meant to be usable without any feature. A dependency that
+      # leaks into the default build would only show up here.
+      - name: build with no features
+        run: cargo build --no-default-features
+
+  features:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [corpus, tiktoken, bench, proxy, mcp, probe, metrics, config, code-mode]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Feature combinations break one at a time and only in isolation; the
+      # combined build above hides that.
+      - run: cargo build --no-default-features --features ${{ matrix.feature }}
