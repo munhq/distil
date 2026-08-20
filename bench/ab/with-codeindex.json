@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "codeindex": {
+      "command": "codeindex",
+      "args": [
+        "--mcp"
+      ],
+      "env": {},
+      "alwaysAllow": [
+        "index_workspace",
+        "search",
+        "find_symbol",
+        "find_word",
+        "get_outline",
+        "get_tree",
+        "get_imported_by",
+        "get_imports",
+        "get_hot_files",
+        "status",
+        "analyze"
+      ]
+    }
+  }
+}
