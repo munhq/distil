@@ -274,6 +274,14 @@ impl ServerHandler for DistilServer {
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
+            // Without this the handshake reports the transport crate's name
+            // ("rmcp"), so every client lists the server as rmcp rather than
+            // distil and two different servers look identical.
+            server_info: rmcp::model::Implementation {
+                name: "distil".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }

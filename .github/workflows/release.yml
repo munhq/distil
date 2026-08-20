@@ -1,0 +1,105 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (e.g. v0.1.1)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl so the binary runs on any glibc, which is the whole point of
+          # shipping one rather than asking for a toolchain.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            arch: x86_64
+            plat: linux
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            arch: aarch64
+            plat: linux
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            arch: x86_64
+            plat: darwin
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            arch: aarch64
+            plat: darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install cross linker
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+            echo "CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          fi
+
+      - name: build distil-mcp
+        run: cargo build --release --locked --target ${{ matrix.target }} --features mcp --bin distil-mcp
+
+      - name: build distil-bench
+        run: cargo build --release --locked --target ${{ matrix.target }} --features bench --bin distil-bench
+
+      # install.sh looks for <binary>-<arch>-<os>, matching `uname -m` and a
+      # lowercased `uname -s`. The names must agree or the installer silently
+      # falls back to a source build.
+      - name: stage artifacts
+        run: |
+          mkdir -p dist
+          for bin in distil-mcp distil-bench; do
+            cp "target/${{ matrix.target }}/release/$bin" \
+               "dist/${bin}-${{ matrix.arch }}-${{ matrix.plat }}"
+          done
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: staged
+      - name: collect and checksum
+        run: |
+          mkdir -p dist
+          find staged -type f -exec cp {} dist/ \;
+          cd dist && sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: dist/*
