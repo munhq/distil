@@ -132,6 +132,18 @@ impl Layer for RegistryLayer {
             .and_then(|v| v.as_str())
             .unwrap_or("full");
 
+        // An absent query is a caller fault, not an empty result. Reporting it
+        // as "no tools found" sends the caller off to rewrite a query it never
+        // sent, and hides the real cause — arguments that arrived as a string,
+        // or under a different key.
+        if query.is_empty() {
+            return Some(
+                "tool_search needs a non-empty `query` string. Pass arguments as \
+                 an object, for example {\"query\": \"read a file\"}."
+                    .to_string(),
+            );
+        }
+
         let results = self.registry.search(query, 5);
 
         if results.is_empty() {

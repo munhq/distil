@@ -72,7 +72,10 @@ struct McpTool {
     name: String,
     #[serde(default)]
     description: String,
+    // Typed for the same reason as ToolCallRequest::arguments: an untyped
+    // schema invites a client to send the field as a string.
     #[serde(default)]
+    #[schemars(with = "std::collections::BTreeMap<String, serde_json::Value>")]
     parameters: serde_json::Value,
 }
 
@@ -81,11 +84,30 @@ struct ToolCallRequest {
     /// Tool name to invoke (e.g., "tool_search", "note_read", "note_write").
     name: String,
     /// Tool arguments as a JSON object.
+    //
+    // The schema must say `object`. A bare serde_json::Value emits a schema with
+    // no type at all, and a client that sees no type is free to send the field
+    // as a JSON *string*. `args.get("query")` then finds nothing, and
+    // tool_search answers every question with "No tools found" — the meta-tool
+    // distil injects becomes unusable through a real client.
     #[serde(default)]
+    #[schemars(with = "std::collections::BTreeMap<String, serde_json::Value>")]
     arguments: serde_json::Value,
     /// Tool definitions (needed for tool_search).
     #[serde(default)]
     tools: Vec<McpTool>,
+}
+
+/// Accept arguments as an object or as a JSON string holding one.
+///
+/// The typed schema above asks every client for an object. This keeps the ones
+/// that still send a string working, rather than failing in a way that reads
+/// like an empty search result.
+fn normalize_arguments(raw: &serde_json::Value) -> serde_json::Value {
+    match raw {
+        serde_json::Value::String(s) => serde_json::from_str(s).unwrap_or(serde_json::Value::Null),
+        other => other.clone(),
+    }
 }
 
 fn default_budget() -> usize {
@@ -236,9 +258,10 @@ impl DistilServer {
         &self,
         Parameters(request): Parameters<ToolCallRequest>,
     ) -> Result<CallToolResult, McpError> {
+        let arguments = normalize_arguments(&request.arguments);
+
         // Try scratchpad first
-        if let Some(output) =
-            Layer::handle_tool_call(&*self.scratchpad, &request.name, &request.arguments)
+        if let Some(output) = Layer::handle_tool_call(&*self.scratchpad, &request.name, &arguments)
         {
             return Ok(CallToolResult::success(vec![Content::text(output)]));
         }
@@ -248,9 +271,7 @@ impl DistilServer {
             let counter = EstimateCounter;
             let tool_specs = to_distil_tools(&request.tools);
             let registry = RegistryLayer::new(tool_specs, &counter);
-            if let Some(output) =
-                Layer::handle_tool_call(&registry, &request.name, &request.arguments)
-            {
+            if let Some(output) = Layer::handle_tool_call(&registry, &request.name, &arguments) {
                 return Ok(CallToolResult::success(vec![Content::text(output)]));
             }
         }
@@ -309,5 +330,28 @@ async fn main() {
     if let Err(e) = service.waiting().await {
         eprintln!("MCP service error: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_arguments;
+
+    #[test]
+    fn arguments_are_accepted_as_an_object_or_as_a_json_string() {
+        let obj = serde_json::json!({"query": "read a file", "detail": "brief"});
+        assert_eq!(normalize_arguments(&obj), obj);
+
+        // A client that sees a schema with no declared type is free to send the
+        // field as a string. tool_search was unusable through one that did.
+        let as_string =
+            serde_json::Value::String(r#"{"query": "read a file", "detail": "brief"}"#.to_string());
+        assert_eq!(normalize_arguments(&as_string), obj);
+    }
+
+    #[test]
+    fn a_string_that_is_not_json_becomes_null_rather_than_panicking() {
+        let junk = serde_json::Value::String("read a file".to_string());
+        assert_eq!(normalize_arguments(&junk), serde_json::Value::Null);
     }
 }

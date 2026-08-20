@@ -997,3 +997,35 @@ fn full_pipeline_real_llm_summarizer() {
         "real LLM pipeline should save >50%, got {pct:.1}%"
     );
 }
+
+#[test]
+fn tool_search_reports_a_missing_query_as_a_caller_fault() {
+    // Every other tool_search test passes a well-formed object, which is how a
+    // real client went unnoticed: it sent `arguments` as a JSON string, the
+    // query arrived empty, and tool_search answered "No tools found" — blaming
+    // the search terms for an encoding problem, and sending the caller back to
+    // rewrite a query it had never sent.
+    let counter = EstimateCounter;
+    let tools = realistic_tools();
+
+    let pipeline = Pipeline::builder()
+        .counter(counter)
+        .layer(RegistryLayer::new(tools, &counter))
+        .build();
+
+    for args in [
+        serde_json::json!({}),
+        serde_json::json!({"query": ""}),
+        serde_json::Value::Null,
+    ] {
+        let out = pipeline.handle_tool_call("tool_search", &args).unwrap();
+        assert!(
+            out.contains("needs a non-empty `query`"),
+            "an absent query must name its cause, got: {out}"
+        );
+        assert!(
+            !out.contains("No tools found"),
+            "an absent query is not an empty result: {out}"
+        );
+    }
+}
