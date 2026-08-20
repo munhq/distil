@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-#
-# Install distil: the MCP server, the measurement CLI, and the Agent Skills.
-#
-# The skills matter as much as the binaries. Measured on one machine over 13,694
-# sessions, an MCP server that ships skills was actually called in 18.5% of the
-# sessions where it was available; one without them managed 4.1%. Registering a
-# server without telling an agent when to reach for it mostly produces an idle
-# server, so this script installs both or reports which half it could not.
+# The shebang matters: this script uses arrays and ${BASH_SOURCE[0]}, neither of
+# which exists in every shell. Without it, `./install.sh` runs under whatever
+# shell the caller happens to use and fails on the first array.
 set -euo pipefail
 
 REPO="${REPO:-munhq/distil}"
@@ -14,48 +9,67 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 SKILL_DIR="${SKILL_DIR:-$HOME/.claude/skills}"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# distil-mcp is the server an agent talks to; distil-bench is the CLI a person
-# runs. Both are feature-gated, and omitting the feature is why an earlier
-# version of this script could not build either from source.
 BINARIES=("distil-mcp:mcp" "distil-bench:bench")
 
 mkdir -p "$INSTALL_DIR"
 
+# Install file $1 as $INSTALL_DIR/$2 atomically. distil-mcp is a long-lived
+# server, so a client can hold the target mapped while this runs. Writing it in
+# place can SIGBUS that process when it faults in a page of a half-written file.
+# Stage on the same filesystem and rename() over the target: the running
+# instance keeps the old inode until it exits.
+atomic_install() {
+    local src="$1" dest="$INSTALL_DIR/$2" tmp
+    tmp="$(mktemp "$dest.XXXXXX")"
+    cat "$src" > "$tmp"
+    chmod 0755 "$tmp"
+    mv -f "$tmp" "$dest"
+}
+
 ARCH="$(uname -m)"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
-need_source_build=0
+need_build=()
 for entry in "${BINARIES[@]}"; do
     bin="${entry%%:*}"
     artifact="${bin}-${ARCH}-${OS}"
+    dl="$INSTALL_DIR/.${bin}.download"
+    rm -f "$dl"
+    # --clobber is required, not defensive: gh refuses -O onto a path that
+    # already exists. Without it the second run of this script downloads
+    # nothing, reports no error, and keeps whatever binary is already there.
     if command -v gh &>/dev/null &&
-       gh release download --repo "$REPO" -p "$artifact" -O "$INSTALL_DIR/$bin" 2>/dev/null; then
-        chmod +x "$INSTALL_DIR/$bin"
+       gh release download --repo "$REPO" -p "$artifact" -O "$dl" --clobber 2>/dev/null; then
+        atomic_install "$dl" "$bin"
+        rm -f "$dl"
         echo "installed prebuilt $bin -> $INSTALL_DIR/$bin"
     else
-        need_source_build=1
+        rm -f "$dl"
+        need_build+=("$entry")
     fi
 done
 
-if [ "$need_source_build" -eq 1 ]; then
+# Build only what the download did not supply. An earlier version skipped the
+# build when the target file existed, which meant a stale binary was never
+# replaced — the download failed and the build declined, so the script became a
+# silent no-op.
+if [ "${#need_build[@]}" -gt 0 ]; then
     echo "no prebuilt binary for ${ARCH}-${OS}; building from source"
     if ! command -v cargo &>/dev/null; then
         echo "error: cargo not found. Install Rust from https://rustup.rs" >&2
         exit 1
     fi
-    for entry in "${BINARIES[@]}"; do
+    for entry in "${need_build[@]}"; do
         bin="${entry%%:*}"
         feat="${entry##*:}"
-        [ -x "$INSTALL_DIR/$bin" ] && continue
-        # Both binaries are behind required-features, so the feature flag is
-        # mandatory: without it cargo reports no such binary.
+        # Both binaries are behind required-features, so a build without the
+        # feature produces nothing at all.
         ( cd "$SRC_DIR" && cargo build --release --features "$feat" --bin "$bin" )
-        cp "$SRC_DIR/target/release/$bin" "$INSTALL_DIR/$bin"
+        atomic_install "$SRC_DIR/target/release/$bin" "$bin"
         echo "built and installed $bin -> $INSTALL_DIR/$bin"
     done
 fi
 
-# ── Skills ──────────────────────────────────────────────────────────────────
 if [ -d "$SRC_DIR/plugin/skills" ]; then
     mkdir -p "$SKILL_DIR"
     for skill in "$SRC_DIR"/plugin/skills/*/; do
@@ -68,16 +82,18 @@ else
     echo "warning: no plugin/skills directory found; skills not installed" >&2
 fi
 
-# ── MCP registration ────────────────────────────────────────────────────────
 if command -v claude &>/dev/null; then
-    # Re-registering the same name errors rather than replacing, so drop any
-    # previous entry first and keep the script re-runnable.
+    # -s user, because `claude mcp add` defaults to local scope and would
+    # register the server for this one directory only. Re-adding a name that
+    # exists errors instead of replacing it, so remove first and keep the
+    # script re-runnable.
+    claude mcp remove -s user distil 2>/dev/null || true
     claude mcp remove distil 2>/dev/null || true
-    claude mcp add distil "$INSTALL_DIR/distil-mcp"
-    echo "registered distil with Claude Code"
+    claude mcp add -s user distil "$INSTALL_DIR/distil-mcp"
+    echo "registered distil with Claude Code (user scope)"
 else
     echo "Claude Code not found — register manually:"
-    echo "  claude mcp add distil $INSTALL_DIR/distil-mcp"
+    echo "  claude mcp add -s user distil $INSTALL_DIR/distil-mcp"
 fi
 
 echo
