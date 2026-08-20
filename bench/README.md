@@ -88,3 +88,37 @@ individual edit is the same either way; the aggregate is not.
 The general result stands independently of any one tool: on this corpus a
 history rewrite must shrink the invalidated tail below 46.5% (10 turns
 remaining), 63.5% (20) or 81.3% (50) to break even. Measured shrink was 90.5%.
+
+## Prior art — read this before quoting any number here
+
+The cache arithmetic in this harness is not new, and an earlier draft of these
+notes implied it was. Correcting that:
+
+- Anthropic's [context editing
+  docs](https://platform.claude.com/docs/en/build-with-claude/context-editing)
+  state that clearing tool results invalidates the cached prefix, and ship
+  `clear_at_least` precisely so a clear only fires when it is big enough to pay
+  for the invalidation.
+- The break-even rule is published: on a 5-minute cache, cleared tokens times
+  requests-before-the-next-clear must exceed 11.5 times the tokens you keep.
+  The table this harness prints reproduces that rule exactly at every turn
+  count. It was derived independently, which validates the arithmetic and
+  contributes nothing.
+- "Beyond Compaction: Structured Context Eviction for Long-Horizon Agents"
+  (arXiv 2606.11213) evaluates eviction on real agent traces, so real traces
+  are not a novelty either — though theirs are benchmark runs (TerminalBench,
+  SWE-Bench) rather than production traffic.
+
+What remains unpublished, as far as this survey found, is the empirical side.
+Every source says to calibrate against your own workload; none ships a way to
+do it, and none reports what the values turn out to be. Those are:
+
+- the amplification factor (515x here) that turns unique text into billed input
+- the split of cost between cache reads and cache writes (71.1% / 28.1% here)
+- the distribution of turns per session, which sets how much room a rewrite has
+  to amortise (p50 = 3, p90 = 69 here)
+- where each tool's output actually goes (Read = 61.8% of tool-result tokens,
+  at 1,563 per call)
+
+Those are what pick a `clear_at_least` value. That is the contribution: the
+calibration data, and the harness that produces it for a corpus you own.

@@ -3,10 +3,24 @@
 Measure what context compression actually costs, on real agent traffic.
 
 Every tool in this space publishes a savings percentage measured on its own
-fixtures. None publishes the denominator: what share of a real session it is
-allowed to touch, and what that share costs once prompt-cache pricing is
-applied. `distil` measures both, then compresses only where the arithmetic says
-compression pays.
+fixtures. What none publishes is the denominator: what share of a real session
+it is allowed to touch, and what that share costs once prompt-cache pricing is
+applied. `distil` measures both on transcripts an agent actually wrote.
+
+**What is prior art, and what is not.** The cache arithmetic below is not a
+discovery. Anthropic's [context editing
+docs](https://platform.claude.com/docs/en/build-with-claude/context-editing)
+state that clearing tool results invalidates the cached prefix, and ship
+`clear_at_least` so a clear only fires when it is large enough to pay for that.
+The break-even rule is published too: on a 5-minute cache, cleared tokens times
+requests-before-the-next-clear must exceed 11.5 times the tokens you keep. The
+table in this README reproduces that rule exactly — it was derived
+independently, which is a check on the arithmetic, not a contribution.
+
+The gap is empirical. Every source says to calibrate against your own workload,
+and none ships a way to do it or publishes what the values turn out to be. That
+is what this crate is for: measuring the numbers you need in order to choose
+`clear_at_least`, or to decide not to clear at all.
 
 ## The result that shapes the rest
 
@@ -43,6 +57,12 @@ into writes at 1.25x or 2.0x. So a rewrite must shrink what it invalidates below
 | 20 | 63.5% | 51.3% |
 | 100 | 89.7% | 84.0% |
 
+That table is the published break-even rule in another form: at every row,
+`cleared x turns / kept` equals 11.5 for the 5-minute tier. Use it to pick a
+`clear_at_least` value, and use `distil-bench` to find the turn count and tail
+size to put into it — those are workload properties, and they are the part
+nobody publishes.
+
 Per unit of history, at 10 remaining turns: keeping it costs 1.00, compressing
 it costs 2.15, and never admitting it costs 0. **You cannot compress your way
 out of context cost. You can only decline to admit tokens.**
@@ -62,6 +82,11 @@ exactly that moment.
 `RegistryLayer` and `CodeModeLayer` predate Anthropic's Tool Search Tool and
 Programmatic Tool Calling, which do the same jobs natively and better. Prefer
 the native features.
+
+For clearing old tool results, prefer the provider's `clear_tool_uses` context
+editing over `MaskingLayer`: it runs server-side, it takes `clear_at_least`, and
+it is one API parameter against a dependency. Reach for a layer here only when
+you need behaviour the API does not offer.
 
 ## Measuring
 
