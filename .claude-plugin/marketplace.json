@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "distil",
+  "description": "Context optimization for LLM agents: measure where a session's tokens actually go, and compress context only where compression pays for the prompt cache it invalidates.",
+  "owner": {
+    "name": "munhq"
+  },
+  "plugins": [
+    {
+      "name": "distil",
+      "description": "Skills and MCP server for context optimization — decide whether compressing an agent's context pays for the prompt cache it invalidates, and compress it when the answer is yes. Bundles the distil MCP server so install wires everything in one step.",
+      "author": {
+        "name": "munhq"
+      },
+      "category": "productivity",
+      "source": "./plugin",
+      "homepage": "https://github.com/munhq/distil"
+    }
+  ]
+}
