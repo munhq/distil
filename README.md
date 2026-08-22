@@ -159,6 +159,33 @@ detail line, so each one can be measured on its own.
 | `mcp` | `distil-mcp` MCP server |
 | `metrics` | Prometheus `/metrics` |
 
+## Install
+
+```
+./install.sh                       # binaries, the skill, and the MCP server
+/plugin marketplace add munhq/distil
+/plugin install distil             # Claude Code: skill and server in one step
+```
+
+`install.sh` installs both binaries, drops the skill into every Claude home it
+finds, and registers the MCP server at user scope. When the plugin is already
+installed it installs the binary only, since the plugin declares the server and
+ships the skill itself.
+
+### Platform support
+
+| platform | binaries | scripts |
+|---|---|---|
+| Linux x86_64 / arm64 | released, tested | yes |
+| macOS x86_64 / arm64 | released, built in CI | yes |
+| Windows x86_64 / arm64 | released, built in CI | needs a shell: Git Bash, MSYS2 or WSL |
+
+The release publishes six targets and `plugin/test_platform.sh` holds both the
+installer and the plugin launcher to that matrix, so an asset name and the name
+asked for cannot drift apart. `install.sh` and the launcher are POSIX shell, so
+on Windows they need a shell — `cmd` and PowerShell cannot run them. Linux
+binaries are static musl builds, so they do not need a matching glibc.
+
 ## Caveats
 
 The corpus is one developer's machine. The **ratios** are the finding; the

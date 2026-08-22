@@ -88,3 +88,8 @@ required-features = ["probe"]
 [dev-dependencies]
 pretty_assertions = "1"
 tokio = { version = "1", features = ["full"] }
+
+[profile.release]
+# Strip at link time. The shipped binaries carry debug symbols nobody consuming a
+# release can use, and every byte is a byte each install downloads.
+strip = true

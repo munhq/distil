@@ -71,6 +71,13 @@ jobs:
       - name: installers must ask for assets the release publishes
         run: bash plugin/test_platform.sh
 
+      # The install test stubs a release and a claude CLI on PATH and checks what
+      # lands in an isolated HOME. Its stub PATH is POSIX, so it runs where that
+      # holds; the mapping test above covers Windows.
+      - name: install.sh must land the binary, the skill and the registration
+        if: matrix.os != 'windows-latest'
+        run: bash plugin/test_install.sh
+
   features:
     runs-on: ubuntu-latest
     strategy:
