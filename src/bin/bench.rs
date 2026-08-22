@@ -775,7 +775,11 @@ fn export_sessions_to(files: &[PathBuf], dir: &str, min_turns: usize, max_sessio
             .and_then(|x| x.to_str())
             .unwrap_or("session")
             .to_string();
-        let out = format!("{dir}/{name}.json");
+        // Path::join rather than a "{dir}/{name}" format, so the separator is
+        // the platform's. Windows tolerates a forward slash, but a path built by
+        // string concatenation is how a separator assumption reaches code that
+        // compares paths later.
+        let out = Path::new(dir).join(format!("{name}.json"));
         let body = match serde_json::to_string(&s.raw_messages) {
             Ok(b) => b,
             Err(_) => continue,
