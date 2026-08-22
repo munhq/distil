@@ -13,6 +13,14 @@
 set -eu
 
 BIN_NAME="distil-mcp"
+# Windows will not execute a file without the .exe extension, so the cached
+# binary and the names searched below carry it. The download would have
+# succeeded and the very next step, running it, would have failed. Empty
+# everywhere else, so nothing changes on Linux or macOS.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*|Windows_NT) EXE=".exe" ;;
+    *) EXE="" ;;
+esac
 REPO="munhq/distil"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/distil/bin"
 
@@ -63,7 +71,7 @@ fi
 if command -v "$BIN_NAME" >/dev/null 2>&1; then
     exec "$(command -v "$BIN_NAME")" "$@"
 fi
-for candidate in "$HOME/.local/bin/$BIN_NAME" "$CACHE_DIR/$BIN_NAME"; do
+for candidate in "$HOME/.local/bin/$BIN_NAME$EXE" "$CACHE_DIR/$BIN_NAME$EXE"; do
     if [ -x "$candidate" ]; then
         exec "$candidate" "$@"
     fi
@@ -84,9 +92,9 @@ rm -f "$TMP"
 if command -v gh >/dev/null 2>&1 &&
    gh release download --repo "$REPO" -p "$ARTIFACT" -O "$TMP" --clobber >/dev/null; then
     chmod 0755 "$TMP"
-    mv -f "$TMP" "$CACHE_DIR/$BIN_NAME"
-    log "distil: fetched $ARTIFACT -> $CACHE_DIR/$BIN_NAME"
-    exec "$CACHE_DIR/$BIN_NAME" "$@"
+    mv -f "$TMP" "$CACHE_DIR/$BIN_NAME$EXE"
+    log "distil: fetched $ARTIFACT -> $CACHE_DIR/$BIN_NAME$EXE"
+    exec "$CACHE_DIR/$BIN_NAME$EXE" "$@"
 fi
 rm -f "$TMP"
 
@@ -95,14 +103,14 @@ if command -v curl >/dev/null 2>&1 &&
    curl -fsSL -o "$TMP" \
      "https://github.com/$REPO/releases/latest/download/$ARTIFACT"; then
     chmod 0755 "$TMP"
-    mv -f "$TMP" "$CACHE_DIR/$BIN_NAME"
-    log "distil: fetched $ARTIFACT -> $CACHE_DIR/$BIN_NAME"
-    exec "$CACHE_DIR/$BIN_NAME" "$@"
+    mv -f "$TMP" "$CACHE_DIR/$BIN_NAME$EXE"
+    log "distil: fetched $ARTIFACT -> $CACHE_DIR/$BIN_NAME$EXE"
+    exec "$CACHE_DIR/$BIN_NAME$EXE" "$@"
 fi
 rm -f "$TMP"
 
 log "distil: no usable $BIN_NAME binary, and none could be fetched."
-log "  searched: \$DISTIL_MCP_BIN, PATH, $HOME/.local/bin, $CACHE_DIR"
+log "  searched: \$DISTIL_MCP_BIN, PATH, $HOME/.local/bin, $CACHE_DIR (name $BIN_NAME$EXE)"
 log "  no release asset '$ARTIFACT' for $REPO (a private repo needs an authenticated gh)"
 log "  build it: git clone git@github.com:$REPO.git && cd distil && ./install.sh"
 exit 127

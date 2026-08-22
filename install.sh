@@ -38,6 +38,15 @@ skill_dirs() {
             # home holds .claude.json, so require it.
             [ -f "$home/.claude.json" ] && resolve_dir "$home/skills"
         done
+        # These tests filter candidates; a false one is not a failure. The
+        # block's status is the last test's, and on a machine with only ~/.claude
+        # the glob "$HOME"/.claude-* stays literal, so that last test fails.
+        # `set -o pipefail` then failed the whole pipeline and `set -e` killed
+        # the script at targets="$(skill_dirs)" — the installer exited 1 without
+        # a message, after the binaries and before the skill and the MCP
+        # registration. On this machine the last sibling happened to be a real
+        # home, so it passed here and would have failed for everyone else.
+        true
     } | awk 'NF && !seen[$0]++'
 }
 
@@ -76,9 +85,27 @@ install_skill() {
     printf '%s %s\n' "distil" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$target/$MARKER"
     echo "installed skill -> $target"
 }
-SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Empty when piped. `curl … | bash` has no script file, so BASH_SOURCE[0] is
+# unset and `set -u` made referencing it fatal: the piped install printed
+# "BASH_SOURCE[0]: unbound variable", installed the binaries, silently skipped
+# the skill, and still exited 0. Every earlier test ran `bash install.sh` from
+# inside the repo, where the variable is set and plugin/skills is right there,
+# so the bug was only reachable through the piped form.
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+    SRC_DIR=""
+fi
 
 BINARIES=("distil-mcp:mcp" "distil-bench:bench")
+
+# Windows will not execute a file without the .exe extension, so the installed
+# name carries it. The download would have succeeded and running it would have
+# failed. Empty everywhere else, so nothing changes on Linux or macOS.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*|Windows_NT) EXE=".exe" ;;
+    *) EXE="" ;;
+esac
 
 mkdir -p "$INSTALL_DIR"
 
@@ -145,9 +172,9 @@ for entry in "${BINARIES[@]}"; do
     # nothing, reports no error, and keeps whatever binary is already there.
     if command -v gh &>/dev/null &&
        gh release download --repo "$REPO" -p "$artifact" -O "$dl" --clobber 2>/dev/null; then
-        atomic_install "$dl" "$bin"
+        atomic_install "$dl" "$bin$EXE"
         rm -f "$dl"
-        echo "installed prebuilt $bin -> $INSTALL_DIR/$bin"
+        echo "installed prebuilt $bin -> $INSTALL_DIR/$bin$EXE"
     else
         rm -f "$dl"
         need_build+=("$entry")
@@ -160,6 +187,13 @@ done
 # silent no-op.
 if [ "${#need_build[@]}" -gt 0 ]; then
     echo "no prebuilt binary for this platform; building from source"
+    # A piped install has no checkout, so there is nothing to build. Saying so
+    # beats running cargo in whatever directory the pipe happened to start in.
+    if [ -z "$SRC_DIR" ]; then
+        echo "error: no local checkout to build from. Clone the repository:" >&2
+        echo "  git clone git@github.com:$REPO.git && cd distil && ./install.sh" >&2
+        exit 1
+    fi
     if ! command -v cargo &>/dev/null; then
         echo "error: cargo not found. Install Rust from https://rustup.rs" >&2
         exit 1
@@ -170,12 +204,30 @@ if [ "${#need_build[@]}" -gt 0 ]; then
         # Both binaries are behind required-features, so a build without the
         # feature produces nothing at all.
         ( cd "$SRC_DIR" && cargo build --release --features "$feat" --bin "$bin" )
-        atomic_install "$SRC_DIR/target/release/$bin" "$bin"
-        echo "built and installed $bin -> $INSTALL_DIR/$bin"
+        atomic_install "$SRC_DIR/target/release/$bin$EXE" "$bin$EXE"
+        echo "built and installed $bin -> $INSTALL_DIR/$bin$EXE"
     done
 fi
 
-if [ -d "$SRC_DIR/plugin/skills" ]; then
+# The plugin channel ships the skill and declares the MCP server itself. When it
+# is installed, doing both again leaves two definitions of one server and two
+# copies of one skill, so the binary is all this script contributes.
+plugin_installed() {
+    command -v claude >/dev/null 2>&1 || return 1
+    claude plugin list 2>/dev/null | grep -q "distil@"
+}
+
+if plugin_installed; then
+    PLUGIN_OWNS=1
+    echo "distil plugin detected — it provides the skill and the MCP server."
+    echo "installed the binary only, so the plugin launcher resolves it locally."
+else
+    PLUGIN_OWNS=0
+fi
+
+if [ "$PLUGIN_OWNS" = "1" ]; then
+    echo "skipping skill install: the plugin ships it."
+elif [ -d "$SRC_DIR/plugin/skills" ]; then
     targets="$(skill_dirs)"
     if [ -z "$targets" ]; then
         echo "warning: no Claude skills directory found; skills not installed" >&2
@@ -187,27 +239,63 @@ if [ -d "$SRC_DIR/plugin/skills" ]; then
         done
     fi
 else
-    echo "warning: no plugin/skills directory found; skills not installed" >&2
+    # Piped install: no checkout to copy from, so fetch the skill from the same
+    # repository. One file per skill, so this is a download rather than a clone.
+    # gh first, because this repository is private and plain curl cannot read it.
+    targets="$(skill_dirs)"
+    if [ -z "$targets" ]; then
+        echo "warning: no Claude skills directory found; skills not installed" >&2
+    else
+        STAGE="$(mktemp -d)"
+        trap 'rm -rf "$STAGE"' EXIT
+        fetched=0
+        for name in distil; do
+            mkdir -p "$STAGE/$name"
+            path="plugin/skills/$name/SKILL.md"
+            if command -v gh &>/dev/null &&
+               gh api "repos/$REPO/contents/$path" -H "Accept: application/vnd.github.raw" \
+                  > "$STAGE/$name/SKILL.md" 2>/dev/null &&
+               [ -s "$STAGE/$name/SKILL.md" ]; then
+                fetched=$((fetched + 1))
+            elif command -v curl &>/dev/null &&
+                 curl -fsSL -o "$STAGE/$name/SKILL.md" \
+                   "https://raw.githubusercontent.com/$REPO/main/$path"; then
+                fetched=$((fetched + 1))
+            else
+                echo "warning: could not fetch the $name skill" >&2
+                rm -rf "$STAGE/$name"
+            fi
+        done
+        if [ "$fetched" -gt 0 ]; then
+            for dest in $targets; do
+                for skill in "$STAGE"/*/; do
+                    install_skill "${skill%/}" "$dest"
+                done
+            done
+        fi
+    fi
 fi
 
-if command -v claude &>/dev/null; then
+if [ "$PLUGIN_OWNS" = "1" ]; then
+    echo "skipping MCP registration: the plugin declares the server."
+elif command -v claude &>/dev/null; then
     # -s user, because `claude mcp add` defaults to local scope and would
     # register the server for this one directory only. Re-adding a name that
     # exists errors instead of replacing it, so remove first and keep the
     # script re-runnable.
     claude mcp remove -s user distil 2>/dev/null || true
     claude mcp remove distil 2>/dev/null || true
-    claude mcp add -s user distil "$INSTALL_DIR/distil-mcp"
+    claude mcp add -s user distil "$INSTALL_DIR/distil-mcp$EXE"
     echo "registered distil with Claude Code (user scope)"
 else
     echo "Claude Code not found — register manually:"
-    echo "  claude mcp add -s user distil $INSTALL_DIR/distil-mcp"
+    echo "  claude mcp add -s user distil $INSTALL_DIR/distil-mcp$EXE"
 fi
 
 echo
 echo "done."
-echo "  server : $INSTALL_DIR/distil-mcp"
-echo "  cli    : $INSTALL_DIR/distil-bench ~/.claude/projects"
+echo "  server : $INSTALL_DIR/distil-mcp$EXE"
+echo "  cli    : $INSTALL_DIR/distil-bench$EXE ~/.claude/projects"
 echo "  skills : $(skill_dirs | tr '\n' ' ')"
 case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;

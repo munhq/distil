@@ -1,0 +1,7 @@
+# Shell scripts must keep LF on every platform. Git for Windows checks out CRLF
+# by default, and bash then fails on the shebang with a message about a bad
+# interpreter or a stray carriage return — for a script whose whole job is to
+# install on Windows.
+*.sh text eol=lf
+install.sh text eol=lf
+plugin/bin/* text eol=lf
