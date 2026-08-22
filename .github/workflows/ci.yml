@@ -36,6 +36,41 @@ jobs:
       - name: build with no features
         run: cargo build --no-default-features
 
+  # Compilation and tests on the platforms the release publishes for. The
+  # release builds six targets across three operating systems, and until this
+  # ran, only Linux was ever proven — a Mac or Windows build could break for a
+  # release and nothing would say so until someone downloaded the asset.
+  platforms:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    # Windows runners default to PowerShell; every script step here is shell,
+    # and bash ships on the Windows image.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: build the shipped binaries
+        run: |
+          cargo build --release --features mcp --bin distil-mcp
+          cargo build --release --features bench --bin distil-bench
+
+      - name: test
+        run: cargo test --features "bench probe mcp metrics config"
+
+      # The plugin launcher and install.sh must ask for asset names the release
+      # matrix really publishes. They did not on any Mac, and the mapping is
+      # pure shell, so it is checked wherever bash runs.
+      - name: installers must ask for assets the release publishes
+        run: bash plugin/test_platform.sh
+
   features:
     runs-on: ubuntu-latest
     strategy:
