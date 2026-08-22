@@ -95,13 +95,49 @@ atomic_install() {
     mv -f "$tmp" "$dest"
 }
 
-ARCH="$(uname -m)"
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+# Map uname onto the names the release publishes. uname disagrees with them on a
+# Mac: `uname -s` says Darwin where the asset says macos, and Apple Silicon says
+# arm64 where the asset says aarch64. A lowercased uname therefore asked for
+# distil-mcp-arm64-darwin, which 404s, so every Apple Silicon Mac fell through to
+# a source build behind a message about there being no prebuilt binary — which
+# reads as a fact about the release rather than the bug it was.
+# plugin/test_platform.sh holds this to the release matrix.
+resolve_artifact() {
+    local arch os ext=""
+    arch="$(uname -m)"
+    os="$(uname -s)"
+    case "$arch" in
+        x86_64|amd64) arch=x86_64 ;;
+        arm64|aarch64) arch=aarch64 ;;
+        *) return 1 ;;
+    esac
+    # Git Bash, MSYS2 and Cygwin report a decorated kernel name rather than
+    # anything containing "windows", e.g. MINGW64_NT-10.0-22631.
+    case "$os" in
+        Linux) os=linux ;;
+        Darwin) os=macos ;;
+        MINGW*|MSYS*|CYGWIN*|Windows_NT) os=windows; ext=".exe" ;;
+        *) return 1 ;;
+    esac
+    printf '%s-%s-%s%s\n' "$1" "$arch" "$os" "$ext"
+}
+
+# Introspection for plugin/test_platform.sh, before anything is installed.
+if [ "${1:-}" = "--print-artifact" ]; then
+    for entry in "${BINARIES[@]}"; do
+        resolve_artifact "${entry%%:*}" || { echo "unsupported"; exit 1; }
+    done
+    exit 0
+fi
 
 need_build=()
 for entry in "${BINARIES[@]}"; do
     bin="${entry%%:*}"
-    artifact="${bin}-${ARCH}-${OS}"
+    if ! artifact="$(resolve_artifact "$bin")"; then
+        echo "no release build for $(uname -m)-$(uname -s); building from source" >&2
+        need_build+=("$entry")
+        continue
+    fi
     dl="$INSTALL_DIR/.${bin}.download"
     rm -f "$dl"
     # --clobber is required, not defensive: gh refuses -O onto a path that
@@ -123,7 +159,7 @@ done
 # replaced — the download failed and the build declined, so the script became a
 # silent no-op.
 if [ "${#need_build[@]}" -gt 0 ]; then
-    echo "no prebuilt binary for ${ARCH}-${OS}; building from source"
+    echo "no prebuilt binary for this platform; building from source"
     if ! command -v cargo &>/dev/null; then
         echo "error: cargo not found. Install Rust from https://rustup.rs" >&2
         exit 1

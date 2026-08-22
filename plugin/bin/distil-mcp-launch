@@ -18,6 +18,41 @@ CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/distil/bin"
 
 log() { printf '%s\n' "$*" >&2; }
 
+# Map uname onto the names the release actually publishes. uname disagrees with
+# them on a Mac: `uname -s` says Darwin where the asset says macos, and Apple
+# Silicon reports arm64 where the asset says aarch64. A raw uname therefore asked
+# for distil-mcp-arm64-darwin, which 404s, so every Apple Silicon Mac fell
+# through to needing a Rust toolchain. plugin/test_platform.sh checks this
+# against the release matrix, so a target added without a mapping fails there
+# rather than in a stranger's terminal.
+resolve_artifact() {
+    _arch="$(uname -m)"
+    _os="$(uname -s)"
+    case "$_arch" in
+        x86_64|amd64) _arch=x86_64 ;;
+        arm64|aarch64) _arch=aarch64 ;;
+        *) return 1 ;;
+    esac
+    # Git Bash, MSYS2 and Cygwin report a decorated kernel name rather than
+    # anything containing "windows", e.g. MINGW64_NT-10.0-22631. A shell on
+    # Windows is the only way this script runs there at all.
+    _ext=""
+    case "$_os" in
+        Linux) _os=linux ;;
+        Darwin) _os=macos ;;
+        MINGW*|MSYS*|CYGWIN*|Windows_NT) _os=windows; _ext=".exe" ;;
+        *) return 1 ;;
+    esac
+    printf '%s-%s-%s%s\n' "$1" "$_arch" "$_os" "$_ext"
+}
+
+# Introspection for plugin/test_platform.sh. Before every exec, so the test
+# never starts a server.
+if [ "${1:-}" = "--artifact" ]; then
+    resolve_artifact "$BIN_NAME" || { echo "unsupported"; exit 1; }
+    exit 0
+fi
+
 # 1. An explicit override wins, for a local build or an unusual layout.
 if [ -n "${DISTIL_MCP_BIN:-}" ] && [ -x "${DISTIL_MCP_BIN}" ]; then
     exec "${DISTIL_MCP_BIN}" "$@"
@@ -36,9 +71,11 @@ done
 
 # 3. Nothing installed. Fetch the release build for this platform once and cache
 #    it, so this path runs on first launch only.
-ARCH="$(uname -m)"
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-ARTIFACT="${BIN_NAME}-${ARCH}-${OS}"
+if ! ARTIFACT="$(resolve_artifact "$BIN_NAME")"; then
+    log "distil: no release build for $(uname -m)-$(uname -s)."
+    log "  build it: git clone git@github.com:$REPO.git && cd distil && ./install.sh"
+    exit 127
+fi
 mkdir -p "$CACHE_DIR"
 TMP="$CACHE_DIR/.${BIN_NAME}.download.$$"
 rm -f "$TMP"
@@ -66,6 +103,6 @@ rm -f "$TMP"
 
 log "distil: no usable $BIN_NAME binary, and none could be fetched."
 log "  searched: \$DISTIL_MCP_BIN, PATH, $HOME/.local/bin, $CACHE_DIR"
-log "  no release asset '$ARTIFACT' for $REPO (private repo needs an authenticated gh)"
+log "  no release asset '$ARTIFACT' for $REPO (a private repo needs an authenticated gh)"
 log "  build it: git clone git@github.com:$REPO.git && cd distil && ./install.sh"
 exit 127

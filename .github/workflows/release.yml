@@ -19,6 +19,12 @@ jobs:
   build:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # Windows runners default to pwsh, and every script step here is bash. Git
+    # Bash ships on the runner, so one default keeps the steps identical on all
+    # three platforms instead of forking them.
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -29,18 +35,35 @@ jobs:
             os: ubuntu-latest
             arch: x86_64
             plat: linux
+            ext: ""
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             arch: aarch64
             plat: linux
+            ext: ""
+          # plat is macos, not darwin. `uname -s` prints Darwin, so the scripts
+          # translate; plugin/test_platform.sh holds them to these names, and
+          # macos matches what codeindex publishes so both projects read alike.
           - target: x86_64-apple-darwin
             os: macos-latest
             arch: x86_64
-            plat: darwin
+            plat: macos
+            ext: ""
           - target: aarch64-apple-darwin
             os: macos-latest
             arch: aarch64
-            plat: darwin
+            plat: macos
+            ext: ""
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            arch: x86_64
+            plat: windows
+            ext: ".exe"
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            arch: aarch64
+            plat: windows
+            ext: ".exe"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -65,15 +88,16 @@ jobs:
       - name: build distil-bench
         run: cargo build --release --locked --target ${{ matrix.target }} --features bench --bin distil-bench
 
-      # install.sh looks for <binary>-<arch>-<os>, matching `uname -m` and a
-      # lowercased `uname -s`. The names must agree or the installer silently
-      # falls back to a source build.
+      # install.sh and the plugin launcher both resolve <binary>-<arch>-<plat>,
+      # with .exe on Windows. The names must agree with the matrix above or an
+      # install silently falls back to needing a toolchain, so the same triple
+      # is asserted by plugin/test_platform.sh in CI.
       - name: stage artifacts
         run: |
           mkdir -p dist
           for bin in distil-mcp distil-bench; do
-            cp "target/${{ matrix.target }}/release/$bin" \
-               "dist/${bin}-${{ matrix.arch }}-${{ matrix.plat }}"
+            cp "target/${{ matrix.target }}/release/${bin}${{ matrix.ext }}" \
+               "dist/${bin}-${{ matrix.arch }}-${{ matrix.plat }}${{ matrix.ext }}"
           done
           ls -la dist
 
