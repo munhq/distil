@@ -1,0 +1,39 @@
+{
+  "name": "@munhq/distil",
+  "version": "0.3.1",
+  "mcpName": "io.github.munhq/distil",
+  "description": "Context optimization middleware for LLM agents — a dynamic tool registry, result masking, token budgeting and smart compaction, so a long session stays inside its window instead of failing for length.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "developer-tools",
+    "context-window",
+    "token-optimization",
+    "compaction"
+  ],
+  "homepage": "https://github.com/munhq/distil",
+  "bugs": "https://github.com/munhq/distil/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/munhq/distil.git"
+  },
+  "license": "MIT OR Apache-2.0",
+  "bin": {
+    "distil-mcp": "bin/distil-mcp.js"
+  },
+  "scripts": {
+    "postinstall": "node bin/postinstall.js",
+    "test": "node bin/selftest.js"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

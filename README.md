@@ -1,5 +1,22 @@
 # distil
 
+[![npm](https://img.shields.io/npm/v/%40munhq%2Fdistil?label=npm&color=cb3837)](https://www.npmjs.com/package/@munhq/distil)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.munhq%2Fdistil-000)](https://registry.modelcontextprotocol.io/v0/servers?search=distil)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](LICENSE-MIT)
+
+[![Install in Cursor](https://img.shields.io/badge/Install-Cursor-000?logo=cursor)](cursor://anysphere.cursor-deeplink/mcp/install?name=distil&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBtdW5ocS9kaXN0aWwiXX0=)
+[![Install in VS Code](https://img.shields.io/badge/Install-VS%20Code-007ACC?logo=visualstudiocode)](vscode:mcp/install?%7B%22name%22%3A%22distil%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22%40munhq%2Fdistil%22%5D%7D)
+
+```
+claude mcp add distil -- npx -y @munhq/distil
+```
+
+No account, no API key, nothing to configure. The package is a small wrapper that
+fetches the binary for your platform and verifies it against the published
+checksums; `install.sh` and a prebuilt binary remain for anyone without Node.
+
+---
+
 Measure what context compression actually costs, on real agent traffic.
 
 Every tool in this space publishes a savings percentage measured on its own

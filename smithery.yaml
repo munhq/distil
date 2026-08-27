@@ -1,0 +1,35 @@
+# Smithery — https://smithery.ai
+#
+# This file describes how to START the server, not what it does. The published
+# listing reads the tool descriptions from a live `tools/list`.
+#
+# READ THIS BEFORE ASSUMING IT PUBLISHES ANYTHING. It does not. A smithery.yaml in
+# a GitHub repository is not a submission — the listing is created by PUTting a
+# release to the Platform API. `node npm/publish-smithery.mjs` and the smithery
+# workflow do that; this file is what a Smithery-style stdio launcher consumes.
+#
+# distil needs no configuration at all: no account, no key, nothing to fill in.
+# That is why configSchema has no properties.
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties: {}
+    required: []
+  commandFunction: |-
+    () => ({
+      // The binary is not JavaScript: this npm package is a small wrapper that
+      // fetches the release asset for the platform, verifies it against
+      // checksums.txt and executes it. `-y` so an install never waits for a
+      // prompt no one is watching.
+      command: 'npx',
+      args: ['-y', '@munhq/distil'],
+      env: {},
+    })
+
+# No Docker image is required for the listing. One exists for hosts that install
+# MCP servers as images, but distil operates on the conversation a client sends
+# it — it reads no files and makes no network calls — so a container buys nothing
+# over a static binary.
+build:
+  dockerfile: null

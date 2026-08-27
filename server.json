@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.munhq/distil",
+  "title": "distil",
+  "description": "Context optimization for LLM agents: tool registry, result masking, budgeting, compaction.",
+  "repository": {
+    "url": "https://github.com/munhq/distil",
+    "source": "github"
+  },
+  "version": "0.3.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@munhq/distil",
+      "version": "0.3.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeHint": "npx"
+    }
+  ]
+}
