@@ -114,10 +114,41 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: staged
-      - name: collect and checksum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The .mcpb bundle — what Smithery requires for a stdio release, and what
+      # Claude Desktop installs with a double click. Built BEFORE the checksums,
+      # so it is hashed with the binaries and cannot describe a version this
+      # release does not contain. The tool list it declares is captured from the
+      # binary being released rather than copied into a manifest that drifts.
+      - name: bundle (.mcpb)
         run: |
           mkdir -p dist
           find staged -type f -exec cp {} dist/ \;
+          chmod +x dist/distil-mcp-x86_64-linux
+          printf '%s\n%s\n%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+            | ./dist/distil-mcp-x86_64-linux > card.jsonl 2>/dev/null
+          node -e '
+            const fs = require("fs");
+            const tools = fs.readFileSync("card.jsonl", "utf8").split("\n").filter(Boolean)
+              .map(JSON.parse).find((m) => m.id === 2)?.result?.tools;
+            if (!tools || !tools.length) {
+              console.error("::error::the released binary advertised no tools");
+              process.exit(1);
+            }
+            fs.writeFileSync("card.json", JSON.stringify({ tools }));
+            console.log(`captured ${tools.length} tools from the release binary`);
+          '
+          VERSION=$(node -p "require('./npm/package.json').version")
+          node npm/build-mcpb.mjs --card card.json --out "dist/distil-$VERSION.mcpb"
+
+      - name: collect and checksum
+        run: |
           cd dist && sha256sum * > checksums.txt
           cat checksums.txt
 

@@ -126,6 +126,34 @@ done <<EOF
 $published
 EOF
 
+# The npm wrapper is another place this mapping is written, and it speaks a
+# different vocabulary for the same six assets: Node says darwin/win32/x64 where
+# uname says Darwin/MINGW64_NT/x86_64. Two scripts agreeing proved nothing when
+# both were wrong about a Mac, so the wrapper is held to the same matrix.
+node_checked=0
+if command -v node >/dev/null 2>&1 && [ -f "$root/npm/bin/selftest.js" ]; then
+    if ! node "$root/npm/bin/selftest.js" >/dev/null 2>&1; then
+        printf 'FAIL npm wrapper  bin/selftest.js failed its own assertions\n'
+        fail=$((fail + 1))
+    fi
+    node_table="$(node "$root/npm/bin/selftest.js" 2>/dev/null)"
+    while IFS="$(printf '\t')" read -r platform arch asset; do
+        [ -n "${asset:-}" ] || continue
+        node_checked=$((node_checked + 1))
+        checked=$((checked + 1))
+        triple="${asset#distil-mcp-}"
+        if ! printf '%s\n' "$published" | grep -qx "$triple"; then
+            printf 'FAIL npm wrapper  %s/%s -> %s (%s) is not in the release matrix\n' \
+                "$platform" "$arch" "$asset" "$triple"
+            fail=$((fail + 1))
+        fi
+    done <<EOF
+$node_table
+EOF
+else
+    printf '>>> SKIPPED the npm wrapper check (no node, or no npm/bin/selftest.js) <<<\n' >&2
+fi
+
 if [ "$fail" -gt 0 ]; then
     printf '\n%d platform failure(s) across %d case(s)\n' "$fail" "$checked" >&2
     exit 1

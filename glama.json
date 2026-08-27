@@ -1,0 +1,21 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "darkkraft"
+  ],
+  "name": "distil",
+  "description": "Context optimization middleware for LLM agents — a dynamic tool registry, result masking, token budgeting and smart compaction, so a long session stays inside its window instead of failing for length.",
+  "category": "developer-tools",
+  "tags": [
+    "mcp",
+    "developer-tools",
+    "context-window",
+    "token-optimization",
+    "compaction"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": "https://github.com/munhq/distil",
+  "runtime": "node",
+  "entryPoint": "npx -y @munhq/distil",
+  "environmentVariables": []
+}
