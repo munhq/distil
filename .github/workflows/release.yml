@@ -128,22 +128,7 @@ jobs:
           mkdir -p dist
           find staged -type f -exec cp {} dist/ \;
           chmod +x dist/distil-mcp-x86_64-linux
-          printf '%s\n%s\n%s\n' \
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release","version":"0"}}}' \
-            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-            '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
-            | ./dist/distil-mcp-x86_64-linux > card.jsonl 2>/dev/null
-          node -e '
-            const fs = require("fs");
-            const tools = fs.readFileSync("card.jsonl", "utf8").split("\n").filter(Boolean)
-              .map(JSON.parse).find((m) => m.id === 2)?.result?.tools;
-            if (!tools || !tools.length) {
-              console.error("::error::the released binary advertised no tools");
-              process.exit(1);
-            }
-            fs.writeFileSync("card.json", JSON.stringify({ tools }));
-            console.log(`captured ${tools.length} tools from the release binary`);
-          '
+          node npm/capture-card.mjs --out card.json -- ./dist/distil-mcp-x86_64-linux
           VERSION=$(node -p "require('./npm/package.json').version")
           node npm/build-mcpb.mjs --card card.json --out "dist/distil-$VERSION.mcpb"
 
