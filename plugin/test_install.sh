@@ -24,6 +24,19 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(dirname "$here")"
 fail=0
 
+# A stub release on disk. install.sh reads it through file:// URLs, so the real
+# http_get and the real checksum verification both run without touching the
+# network. A stub that skipped checksums.txt would leave the one step that
+# refuses a tampered binary untested.
+stub_release() {
+    d="$1"
+    mkdir -p "$d"
+    for a in $(bash "$root/install.sh" --print-artifact); do
+        printf '#!/bin/sh\necho stub\n' > "$d/$a"
+    done
+    ( cd "$d" && sha256sum ./* | sed 's| \./| |' > checksums.txt )
+}
+
 stub_dir() {
     d="$1"
     mkdir -p "$d"
@@ -104,31 +117,63 @@ run_case() {
     # fault needed.
     echo '{}' > "$home/.claude/.claude.json"
     stub_dir "$tmp/stub"
+    stub_release "$tmp/release"
+    if [ "$mode" = "gh-fallback" ]; then
+        # No working HTTP client. `command -v` finds these first, so install.sh
+        # takes them and they fail — the situation the gh path exists for.
+        for c in curl wget; do
+            printf '#!/bin/sh\nexit 1\n' > "$tmp/stub/$c"; chmod +x "$tmp/stub/$c"
+        done
+    fi
     log="$tmp/mcp.log"
     : > "$log"
 
+    env_common=(-u CLAUDE_CONFIG_DIR
+        HOME="$home" MCP_LOG="$log" INSTALL_DIR="$home/.local/bin"
+        RELEASE_URL="file://$tmp/release" RAW_URL="file://$root"
+        PATH="$tmp/stub:/usr/bin:/bin")
+
     if [ "$mode" = "piped" ]; then
-        cat "$root/install.sh" | env -u CLAUDE_CONFIG_DIR \
-            HOME="$home" MCP_LOG="$log" INSTALL_DIR="$home/.local/bin" \
-            PATH="$tmp/stub:/usr/bin:/bin" bash >"$tmp/out" 2>&1
+        cat "$root/install.sh" | env "${env_common[@]}" bash >"$tmp/out" 2>&1
         status=$?
     else
-        env -u CLAUDE_CONFIG_DIR \
-            HOME="$home" MCP_LOG="$log" INSTALL_DIR="$home/.local/bin" \
-            PATH="$tmp/stub:/usr/bin:/bin" bash "$root/install.sh" >"$tmp/out" 2>&1
+        env "${env_common[@]}" bash "$root/install.sh" >"$tmp/out" 2>&1
         status=$?
     fi
 
     check_outcome "$mode" "$home" "$log" "$status" "$tmp/out"
 
+    # WHICH path installed the binary, not just that one landed. install.sh used
+    # to reach the release only through gh, so a machine without the CLI — or
+    # with it but logged out — fell through to a source build behind a message
+    # about there being no prebuilt binary. Nothing failed; the wrong path just
+    # became the only one. Assert the path.
+    if [ "$mode" = "gh-fallback" ]; then
+        if ! grep -q "via gh" "$tmp/out"; then
+            printf 'FAIL %-11s did not fall back to gh with no HTTP client\n' "$mode"
+            fail=$((fail + 1))
+        fi
+    elif ! grep -q "checksum verified" "$tmp/out"; then
+        printf 'FAIL %-11s did not install over verified HTTP\n' "$mode"
+        fail=$((fail + 1))
+    fi
+
     # Re-running must be safe: the download refuses an existing path without
     # --clobber, and a skill directory it wrote before carries a marker.
     if [ "$mode" = "checkout" ]; then
-        env -u CLAUDE_CONFIG_DIR \
-            HOME="$home" MCP_LOG="$log" INSTALL_DIR="$home/.local/bin" \
-            PATH="$tmp/stub:/usr/bin:/bin" bash "$root/install.sh" >"$tmp/out2" 2>&1
+        env "${env_common[@]}" bash "$root/install.sh" >"$tmp/out2" 2>&1
         status=$?
         check_outcome "rerun" "$home" "$log" "$status" "$tmp/out2"
+
+        # A tampered asset must be refused rather than installed. Publishing
+        # checksums.txt beside the binaries buys nothing if nothing checks it.
+        first="$(bash "$root/install.sh" --print-artifact | head -1)"
+        printf 'tampered\n' > "$tmp/release/$first"
+        env "${env_common[@]}" bash "$root/install.sh" >"$tmp/out3" 2>&1 || true
+        if ! grep -q "checksum mismatch" "$tmp/out3"; then
+            printf 'FAIL %-11s a tampered release asset was not rejected\n' tamper
+            fail=$((fail + 1))
+        fi
     fi
 
     rm -rf "$tmp"
@@ -136,9 +181,10 @@ run_case() {
 
 run_case piped
 run_case checkout
+run_case gh-fallback
 
 if [ "$fail" -gt 0 ]; then
     printf '\n%d install failure(s)\n' "$fail" >&2
     exit 1
 fi
-echo "install: piped, checked-out and re-run all land the binaries, the skill and the registration"
+echo "install: piped, checked-out, re-run and gh-fallback all land the binaries, the skill and the registration; a tampered asset is refused"
