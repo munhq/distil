@@ -100,6 +100,10 @@ jobs:
         run: |
           node npm/capture-card.mjs --out card.json -- ./distil-mcp-x86_64-linux
 
+      # One call. The script creates the listing itself when the release PUT
+      # 404s, because the Platform API separates the two and a first publish
+      # would otherwise need a human — which is how codeindex's listing came to
+      # exist and why nothing here had ever exercised the case.
       - name: Publish the listing
         if: steps.key.outputs.present == 'true' && steps.npmlive.outputs.live == 'true'
         env:
