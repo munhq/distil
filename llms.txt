@@ -1,0 +1,103 @@
+# distil
+
+> Context optimization for LLM agents, as an MCP server, a Rust crate and a
+> measurement harness. It answers "where do this session's tokens actually go"
+> and "does compressing this history pay for the prompt cache it invalidates",
+> measured on real agent transcripts rather than on fixtures. MIT OR Apache-2.0.
+
+distil counts a conversation by segment, prices a history rewrite against
+prompt-cache multipliers, and exposes the result over MCP (JSON-RPC on stdio,
+protocol 2024-11-05). It also ships composable layers that perform the
+compression — but the point of the project is knowing when not to.
+
+## The finding
+
+Measured over 13,681 local Claude Code transcripts, 366,008 assistant turns,
+195M tokens of unique text:
+
+    tool results    117,460,908    60.1%
+    tool calls       32,391,631    16.6%
+    user text        29,363,474    15.0%
+    assistant text   14,187,961     7.3%
+    thinking          2,076,716     1.1%
+
+Those 195M unique tokens were billed as 100.6 billion input tokens: every token
+paid for 515 times, because a request resends the whole history.
+
+Priced at real cache multipliers (read 0.1x, write 1.25x for the 5-minute TTL,
+2.0x for the 1-hour):
+
+    cache reads     97.8% of tokens    71.1% of cost
+    cache writes     2.1% of tokens    28.1% of cost
+
+Cache writes are 2% of the tokens and 28% of the bill. Editing history
+invalidates the cached prefix from the edit onwards, converting reads at 0.1x
+into writes at 1.25x or 2.0x. So a rewrite must shrink what it invalidates
+below:
+
+    turns remaining     5m TTL    1h TTL
+     1                    8.0%      5.0%
+    10                   46.5%     34.5%
+    20                   63.5%     51.3%
+   100                   89.7%     84.0%
+
+That is the published break-even rule in another form: at every row,
+cleared x turns / kept equals 11.5 for the 5-minute tier.
+
+## What that means in practice
+
+Layers that do not touch history are on the right side of the arithmetic:
+CacheAlignLayer (orders content so the stable prefix stays cacheable) and
+ScratchpadLayer (keeps working state outside the window).
+
+Layers that rewrite history — MaskingLayer, SummarizationLayer,
+CompactionLayer — cost more than they save in the common case. Reach for them
+at one boundary only: context overflow, where the alternative is a failed
+request and cache price stops being the comparison. BudgetLayer exists for
+that moment.
+
+For clearing old tool results, prefer the provider's own context editing:
+it runs server-side, it takes clear_at_least, and it is one API parameter
+against a dependency.
+
+## MCP tools
+
+    optimize     compress a conversation, reporting tokens before and after
+                 plus a per-layer breakdown
+    tool_call    handle the meta-tools distil injects (tool_search, note_read,
+                 note_write)
+
+## Install
+
+    npx -y @munhq/distil
+
+    claude mcp add distil -- npx -y @munhq/distil
+
+No account, no API key, nothing to configure. The npm package is a wrapper that
+fetches the release binary for the platform and verifies it against the
+published checksums. install.sh and prebuilt binaries for six targets exist for
+anyone without Node.
+
+## Measuring your own corpus
+
+    cargo build --features bench --release
+    ./target/release/distil-bench ~/.claude/projects --json baseline.json
+
+Reports where tokens are, what they cost, and the break-even table for your own
+workload. The ratios above are one developer's machine; the absolute totals are
+personal. Every source says to calibrate against your own traffic, and this is
+the part nobody ships.
+
+## Caveats
+
+Counts use cl100k_base, which approximates Claude's tokenizer within a few
+percent. The break-even model assumes a single cache breakpoint, so a rewrite
+confined to the tail costs less than the table shows — that refines it, it does
+not reverse it.
+
+## Links
+
+    repository   https://github.com/munhq/distil
+    npm          https://www.npmjs.com/package/@munhq/distil
+    registry     io.github.munhq/distil
+    smithery     https://smithery.ai/server/munhq/distil

@@ -1,0 +1,17 @@
+{
+  "name": "distil",
+  "owner": {
+    "name": "munhq"
+  },
+  "metadata": {
+    "description": "Measure where an agent session's tokens actually go, and compress context only where compression pays for the prompt cache it invalidates.",
+    "version": "0.3.4"
+  },
+  "plugins": [
+    {
+      "name": "distil",
+      "source": "./plugin",
+      "description": "A skill that decides whether compressing an agent's context pays for the prompt cache it invalidates, and compresses it when the answer is yes. Bundles the distil MCP server so install wires everything in one step."
+    }
+  ]
+}
