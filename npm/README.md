@@ -1,4 +1,4 @@
-# @munhq/distil
+<img src="https://raw.githubusercontent.com/munhq/distil/main/docs/brand/logo.svg" alt="distil" width="210" height="70">
 
 Context optimization middleware for LLM agents — a dynamic tool registry, result masking, token budgeting and smart compaction, so a long session stays inside its window instead of failing for length.
 
