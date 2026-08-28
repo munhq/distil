@@ -190,6 +190,12 @@ finds, and registers the MCP server at user scope. When the plugin is already
 installed it installs the binary only, since the plugin declares the server and
 ships the skill itself.
 
+The plugin launches the server with `npx -y @munhq/distil`, so it needs Node.
+It cannot use a plugin-relative path: Claude Code expands `${CLAUDE_PLUGIN_ROOT}`
+and nothing else does, so a plugin declaring one hands every other client a
+literal path that does not exist. `install.sh` and the prebuilt binaries remain
+for anyone without Node.
+
 ### Platform support
 
 | platform | binaries | scripts |
