@@ -83,17 +83,9 @@ anyone without Node.
     cargo build --features bench --release
     ./target/release/distil-bench ~/.claude/projects --json baseline.json
 
-Reports where tokens are, what they cost, and the break-even table for your own
-workload. The ratios above are one developer's machine; the absolute totals are
-personal. Every source says to calibrate against your own traffic, and this is
-the part nobody ships.
-
-## Caveats
-
-Counts use cl100k_base, which approximates Claude's tokenizer within a few
-percent. The break-even model assumes a single cache breakpoint, so a rewrite
-confined to the tail costs less than the table shows — that refines it, it does
-not reverse it.
+Reports where tokens are, what they cost, and the break-even table for that
+corpus. The numbers above come from one machine: the ratios transfer, the
+absolute totals do not.
 
 ## Links
 

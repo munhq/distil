@@ -60,8 +60,8 @@ plugin/         the Claude Code plugin: skill, launcher, install tests
 ## Adding a layer
 
 1. Add `src/layers/<name>_layer.rs` and implement `Layer` from `src/pipeline.rs`.
-2. Report honest `tokens_before` and `tokens_after`, plus a detail line. Every
-   layer must be measurable on its own.
+2. Report `tokens_before`, `tokens_after` and a detail line. Every layer must
+   be measurable on its own.
 3. Keep it sync. Every layer is sync; async callers use `block_in_place`.
 4. Do not call an LLM from the layer. If you need one, take it through the
    `Summarizer` or `Completer` trait so the caller supplies it.
