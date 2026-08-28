@@ -1,0 +1,56 @@
+# One-off maintenance: remove a published npm version using the repository's
+# NPM_TOKEN, so an unpublish does not need a human's authenticator app.
+#
+# npm asks for a one-time password when `npm unpublish` runs against an account
+# with 2FA, which no local run can answer without the phone. The CI token
+# already publishes without one — it published 0.3.3 — so the same token can do
+# this. Manual dispatch only: there is no trigger that can fire it by accident.
+name: npm-unpublish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Exact version to unpublish, e.g. 0.3.2'
+        required: true
+      confirm:
+        description: 'Type the package name to confirm'
+        required: true
+
+jobs:
+  unpublish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Removing the LAST version of a package deletes the package and blocks
+      # republishing anything for 24 hours. Refuse rather than discover that.
+      - name: Refuse if it is the last version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ "${{ inputs.confirm }}" != "@munhq/distil" ]; then
+            echo "::error::confirm must be @munhq/distil"; exit 1
+          fi
+          COUNT=$(npm view "@munhq/distil" versions --json | node -e \
+            'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);console.log(Array.isArray(v)?v.length:1)})')
+          echo "published versions: $COUNT"
+          if [ "$COUNT" -lt 2 ]; then
+            echo "::error::$COUNT version(s) published — unpublishing the last one blocks republishing for 24h"
+            exit 1
+          fi
+
+      - name: Unpublish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          npm unpublish "@munhq/distil@$VERSION"
+          echo "unpublished @munhq/distil@$VERSION"
+
+      - name: What remains
+        run: npm view "@munhq/distil" versions --json
