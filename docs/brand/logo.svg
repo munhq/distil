@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 140" role="img" aria-label="distil">
+  <title>distil</title>
+  <defs>
+    <linearGradient id="ds" x1="18" y1="122" x2="122" y2="18" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7c3aed"/><stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+  </defs>
+  <rect x="18" y="18" width="104" height="104" rx="28" fill="url(#ds)"/>
+  <!-- The mark is icon.svg's paths verbatim, placed by a transform rather than
+       re-drawn at this scale. Re-drawing is how a wordmark and a favicon slowly
+       stop being the same logo. 104/512 = 0.203125, and the strokes scale with it. -->
+  <g transform="translate(18 18) scale(0.203125)">
+    <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+      <g stroke-width="26" opacity="0.85">
+        <path d="M170 96h172"/>
+        <path d="M196 148h120"/>
+      </g>
+      <path stroke-width="30" d="M138 206h236l-86 132v58h-64v-58z"/>
+      <path stroke-width="26" d="M256 438c-14 0-24-10-24-23 0-12 10-20 24-37 14 17 24 25 24 37 0 13-10 23-24 23z"/>
+    </g>
+  </g>
+  <text x="150" y="88" font-family="'Hanken Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif"
+        font-size="62" font-weight="700" letter-spacing="-2" fill="#12151C">distil</text>
+</svg>

@@ -4,7 +4,7 @@
     "darkkraft"
   ],
   "name": "distil",
-  "description": "Context optimization middleware for LLM agents — a dynamic tool registry, result masking, token budgeting and smart compaction, so a long session stays inside its window instead of failing for length.",
+  "description": "Context optimization middleware for LLM agents \u2014 a dynamic tool registry, result masking, token budgeting and smart compaction, so a long session stays inside its window instead of failing for length.",
   "category": "developer-tools",
   "tags": [
     "mcp",
@@ -17,5 +17,6 @@
   "repository": "https://github.com/munhq/distil",
   "runtime": "node",
   "entryPoint": "npx -y @munhq/distil",
-  "environmentVariables": []
+  "environmentVariables": [],
+  "iconUrl": "https://raw.githubusercontent.com/munhq/distil/main/docs/brand/icon-512.png"
 }

@@ -1,7 +1,8 @@
-# distil
+<img src="docs/brand/logo.svg" alt="distil" width="210" height="70">
 
 [![npm](https://img.shields.io/npm/v/%40munhq%2Fdistil?label=npm&color=cb3837)](https://www.npmjs.com/package/@munhq/distil)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.munhq%2Fdistil-000)](https://registry.modelcontextprotocol.io/v0/servers?search=distil)
+[![Smithery](https://img.shields.io/badge/Smithery-munhq%2Fdistil-7c3aed)](https://smithery.ai/servers/munhq/distil)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](LICENSE-MIT)
 
 [![Install in Cursor](https://img.shields.io/badge/Install-Cursor-000?logo=cursor)](cursor://anysphere.cursor-deeplink/mcp/install?name=distil&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBtdW5ocS9kaXN0aWwiXX0=)
