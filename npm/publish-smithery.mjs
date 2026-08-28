@@ -94,17 +94,90 @@ if (dryRun) {
   process.exit(0);
 }
 
-const form = new FormData();
-// A string field. Sent as a file part, the API answers "expected string,
-// received undefined" and names nothing.
-form.append('payload', JSON.stringify(payload));
-form.append(
-  'bundle',
-  new Blob([readFileSync(bundlePath)], { type: 'application/zip' }),
-  path.basename(bundlePath)
-);
+// The bundle is read once. A release is retried after the listing is created,
+// and re-reading the file for the retry would let the two attempts disagree.
+const bundle = readFileSync(bundlePath);
 
-const res = await fetch(url, { method: 'PUT', headers: { authorization: `Bearer ${key}` }, body: form });
+const release = () => {
+  const form = new FormData();
+  // A string field. Sent as a file part, the API answers "expected string,
+  // received undefined" and names nothing.
+  form.append('payload', JSON.stringify(payload));
+  form.append('bundle', new Blob([bundle], { type: 'application/zip' }), path.basename(bundlePath));
+  return fetch(url, { method: 'PUT', headers: { authorization: `Bearer ${key}` }, body: form });
+};
+
+// PUT .../releases UPDATES a listing; it does not create one, and a server that
+// has never been listed answers 404 "Server not found". codeindex's listing was
+// created by hand, so this script had never met that case and distil's first
+// release failed on it.
+//
+// Creating one is its own call: PUT /servers/<qualified> with a JSON body. Do
+// NOT reach for `smithery mcp publish` here — it builds configSchema only when
+// the bundle manifest carries a non-empty user_config, and distil needs no
+// configuration at all, so it sends undefined and the API rejects the payload.
+const serverUrl = `https://api.smithery.ai/servers/${qualified}`;
+
+// The listing's own record: what a directory page shows above the tool list.
+// The release payload does NOT populate it — distil's first listing came up
+// with an empty description because this call was missing. The description
+// comes from npm/package.json so one edit moves every surface.
+// Field names are the Platform API's, from https://api.smithery.ai/openapi:
+// PUT accepts displayName and description only; PATCH accepts those plus
+// homepage, repositoryUrl, backlinkUrl, license, iconUrl and unlisted.
+const identity = { displayName: server, description: pkg.description };
+const listingRecord = {
+  ...identity,
+  // Where the org lists what it builds, not the repository — repositoryUrl is
+  // the field for that, and pointing both at the same place wastes a row.
+  homepage: 'https://munhq.com/products',
+  // npm records this as `git+https://….git`, which is a clone URL. A listing
+  // links it for a human to click, so hand it a browsable one.
+  repositoryUrl: (typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url || '')
+    .replace(/^git\+/, '')
+    .replace(/\.git$/, ''),
+  license: pkg.license,
+  // distil has no mark of its own, and an icon that resolves beats a blank
+  // tile. Same one codeindex's listing carries.
+  iconUrl: 'https://www.google.com/s2/favicons?domain=github.com&sz=64',
+};
+
+const createListing = async () => {
+  const r = await fetch(serverUrl, {
+    method: 'PUT',
+    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    // PUT takes the two identity fields; everything else lands in the PATCH.
+    body: JSON.stringify(identity),
+  });
+  if (!r.ok) die(`PUT ${serverUrl} -> HTTP ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  process.stdout.write(`created the ${namespace}/${server} listing\n`);
+};
+
+// Keep the record current on every publish, so a description edit ships with
+// the next release instead of needing someone to remember. A failure here is
+// reported but does not fail the run: the release itself already landed, and a
+// red release for a stale subtitle would be the wrong trade.
+const updateListing = async () => {
+  const r = await fetch(serverUrl, {
+    method: 'PATCH',
+    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    body: JSON.stringify(listingRecord),
+  });
+  if (!r.ok) {
+    process.stderr.write(
+      `::warning::PATCH ${serverUrl} -> HTTP ${r.status}: ${(await r.text()).slice(0, 200)}\n`
+    );
+    return;
+  }
+  process.stdout.write(`listing record updated (description, homepage, repo, license, icon)\n`);
+};
+
+let res = await release();
+if (res.status === 404) {
+  process.stdout.write(`${namespace}/${server} is not listed yet; creating it\n`);
+  await createListing();
+  res = await release();
+}
 const text = await res.text();
 if (!res.ok) die(`PUT ${url} -> HTTP ${res.status}: ${text}`);
 
@@ -123,3 +196,5 @@ for (const w of body.warnings || []) process.stderr.write(`  warning: ${w}\n`);
 if (body.status && !['SUCCESS', 'QUEUED', 'WORKING'].includes(body.status)) {
   die(`release status is ${body.status}`);
 }
+
+await updateListing();
