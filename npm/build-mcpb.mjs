@@ -73,6 +73,13 @@ try {
     repository: { type: 'git', url: 'https://github.com/munhq/distil' },
     license: 'MIT OR Apache-2.0',
     keywords: ['mcp', 'context-window', 'token-optimization', 'prompt-cache', 'compaction'],
+    // The bundle is what Claude Desktop installs, and its manifest is the only
+    // place that install can get an icon from. Referenced by URL rather than
+    // packed in, so the 4 KB bundle stays 4 KB.
+    icons: [
+      { src: 'https://raw.githubusercontent.com/munhq/distil/main/docs/brand/icon-128.png', size: '128x128' },
+      { src: 'https://raw.githubusercontent.com/munhq/distil/main/docs/brand/icon-512.png', size: '512x512' },
+    ],
     server: {
       type: 'node',
       entry_point: 'server/distil-mcp.js',
