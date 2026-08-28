@@ -161,21 +161,30 @@ jobs:
         working-directory: npm
         run: |
           node bin/postinstall.js
-          printf '%s\n' \
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
-            | timeout 120 node bin/distil-mcp.js > handshake.json
+          # Speak the whole handshake, do not pipe one line in and read stdout.
+          # That form closes stdin before the server has seen the initialized
+          # notification; distil answers initialize and then exits 1 with
+          # "connection closed: initialize notification", which failed this step
+          # for a server that works perfectly against a real client.
+          # capture-card.mjs waits for each reply before closing stdin, which is
+          # what a client does — and it proves the tool list too, not just that
+          # the process answered once.
+          node capture-card.mjs --out card.json -- node bin/distil-mcp.js
           node -e '
-            const fs = require("fs");
-            const line = fs.readFileSync("handshake.json", "utf8").split("\n").find(Boolean);
-            const got = JSON.parse(line).result.serverInfo;
+            const card = require("./card.json");
+            const got = card.serverInfo;
             const want = require("./package.json").version;
             if (got.name !== "distil" || got.version !== want) {
               console.error(`::error::handshake says ${got.name} ${got.version}, expected distil ${want}`);
               process.exit(1);
             }
-            console.log(`handshake ok: ${got.name} ${got.version}`);
+            if (!card.tools.length) {
+              console.error("::error::the server advertised no tools");
+              process.exit(1);
+            }
+            console.log(`handshake ok: ${got.name} ${got.version}, ${card.tools.length} tools`);
           '
-          rm -f handshake.json
+          rm -f card.json
 
       # E403 "You do not have permission to publish" says nothing about WHICH of
       # the three possible causes it is: a name someone else owns, a token from

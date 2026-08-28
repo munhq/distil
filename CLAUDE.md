@@ -14,7 +14,8 @@ a layer or a default that rewrites history without pricing it against that table
 
 ## Consumption modes
 
-1. **Crate** — `distil = "0.3"`, or a path dependency. Pure library, no binary.
+1. **Crate** — a path or git dependency. Pure library, no binary. Not on
+   crates.io yet; the name is unclaimed.
 2. **MCP server** — `distil-mcp`, shipped as `@munhq/distil` on npm, as a Claude
    Code plugin, and as release binaries for six targets.
 3. **HTTP server** — `distil-proxy`, direct (`POST /v1/optimize`) or as a proxy
