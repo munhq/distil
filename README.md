@@ -199,7 +199,7 @@ ships the skill itself.
 
 The release publishes six targets and `plugin/test_platform.sh` holds both the
 installer and the plugin launcher to that matrix, so an asset name and the name
-asked for cannot drift apart. `install.sh` and the launcher are POSIX shell, so
+asked for cannot drift apart. `install.sh` and the launcher are bash scripts, so
 on Windows they need a shell — `cmd` and PowerShell cannot run them. Linux
 binaries are static musl builds, so they do not need a matching glibc.
 

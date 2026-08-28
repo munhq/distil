@@ -157,6 +157,61 @@ if [ "${1:-}" = "--print-artifact" ]; then
     exit 0
 fi
 
+# Base for plain HTTPS asset downloads. Overridable so plugin/test_install.sh can
+# serve a stub release from disk instead of reaching the network.
+RELEASE_URL="${RELEASE_URL:-https://github.com/$REPO/releases/latest/download}"
+# Base for single-file source reads (the skill in a piped install). Overridable
+# for the same reason as RELEASE_URL.
+RAW_URL="${RAW_URL:-https://raw.githubusercontent.com/$REPO/main}"
+
+# Fetch $1 to $2 over plain HTTPS. gh is NOT used here: the releases are public,
+# so requiring the CLI — installed AND logged in — turned every machine without
+# it into a source build behind a message about there being no prebuilt binary.
+# That was correct only while the repository was private.
+http_get() {
+    if command -v curl &>/dev/null; then
+        curl -fsSL -o "$2" "$1"
+    elif command -v wget &>/dev/null; then
+        wget -qO "$2" "$1"
+    else
+        return 1
+    fi
+}
+
+sha256_of() {
+    if command -v sha256sum &>/dev/null; then
+        sha256sum "$1" | cut -d' ' -f1
+    elif command -v shasum &>/dev/null; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        return 1
+    fi
+}
+
+# Every release publishes checksums.txt beside the binaries, and the npm wrapper
+# and the Dockerfile both verify against it. This script did not, because gh
+# fetched over an authenticated channel. Downloading over plain HTTPS makes the
+# check load-bearing, so refuse the binary rather than install one that does not
+# match what the release published.
+CHECKSUMS=""
+fetch_checksums() {
+    [ -n "$CHECKSUMS" ] && return 0
+    CHECKSUMS="$(mktemp)"
+    if http_get "$RELEASE_URL/checksums.txt" "$CHECKSUMS" && [ -s "$CHECKSUMS" ]; then
+        return 0
+    fi
+    rm -f "$CHECKSUMS"; CHECKSUMS=""
+    return 1
+}
+
+verify_asset() {
+    local file="$1" name="$2" want got
+    want="$(awk -v a="$name" '$2 == a { print $1 }' "$CHECKSUMS")"
+    [ -n "$want" ] || { echo "checksums.txt does not list $name" >&2; return 1; }
+    got="$(sha256_of "$file")" || { echo "no sha256 tool to verify $name" >&2; return 1; }
+    [ "$want" = "$got" ] || { echo "checksum mismatch for $name" >&2; return 1; }
+}
+
 need_build=()
 for entry in "${BINARIES[@]}"; do
     bin="${entry%%:*}"
@@ -167,19 +222,28 @@ for entry in "${BINARIES[@]}"; do
     fi
     dl="$INSTALL_DIR/.${bin}.download"
     rm -f "$dl"
-    # --clobber is required, not defensive: gh refuses -O onto a path that
-    # already exists. Without it the second run of this script downloads
-    # nothing, reports no error, and keeps whatever binary is already there.
-    if command -v gh &>/dev/null &&
-       gh release download --repo "$REPO" -p "$artifact" -O "$dl" --clobber 2>/dev/null; then
+    if fetch_checksums &&
+       http_get "$RELEASE_URL/$artifact" "$dl" &&
+       verify_asset "$dl" "$artifact"; then
         atomic_install "$dl" "$bin$EXE"
         rm -f "$dl"
-        echo "installed prebuilt $bin -> $INSTALL_DIR/$bin$EXE"
+        echo "installed prebuilt $bin -> $INSTALL_DIR/$bin$EXE (checksum verified)"
+    # gh is the fallback, for a machine where the direct download is blocked but
+    # the CLI is configured. --clobber is required, not defensive: gh refuses -O
+    # onto a path that already exists, so without it the second run of this
+    # script downloads nothing, reports no error, and keeps the old binary.
+    elif rm -f "$dl" &&
+         command -v gh &>/dev/null &&
+         gh release download --repo "$REPO" -p "$artifact" -O "$dl" --clobber 2>/dev/null; then
+        atomic_install "$dl" "$bin$EXE"
+        rm -f "$dl"
+        echo "installed prebuilt $bin -> $INSTALL_DIR/$bin$EXE (via gh)"
     else
         rm -f "$dl"
         need_build+=("$entry")
     fi
 done
+[ -n "$CHECKSUMS" ] && rm -f "$CHECKSUMS"
 
 # Build only what the download did not supply. An earlier version skipped the
 # build when the target file existed, which meant a stale binary was never
@@ -241,7 +305,8 @@ elif [ -d "$SRC_DIR/plugin/skills" ]; then
 else
     # Piped install: no checkout to copy from, so fetch the skill from the same
     # repository. One file per skill, so this is a download rather than a clone.
-    # gh first, because this repository is private and plain curl cannot read it.
+    # curl first: the repository is public, so the no-auth path is the one that
+    # works everywhere. gh stays as the fallback for a blocked direct download.
     targets="$(skill_dirs)"
     if [ -z "$targets" ]; then
         echo "warning: no Claude skills directory found; skills not installed" >&2
@@ -252,14 +317,13 @@ else
         for name in distil; do
             mkdir -p "$STAGE/$name"
             path="plugin/skills/$name/SKILL.md"
-            if command -v gh &>/dev/null &&
-               gh api "repos/$REPO/contents/$path" -H "Accept: application/vnd.github.raw" \
-                  > "$STAGE/$name/SKILL.md" 2>/dev/null &&
+            if http_get "$RAW_URL/$path" "$STAGE/$name/SKILL.md" &&
                [ -s "$STAGE/$name/SKILL.md" ]; then
                 fetched=$((fetched + 1))
-            elif command -v curl &>/dev/null &&
-                 curl -fsSL -o "$STAGE/$name/SKILL.md" \
-                   "https://raw.githubusercontent.com/$REPO/main/$path"; then
+            elif command -v gh &>/dev/null &&
+                 gh api "repos/$REPO/contents/$path" -H "Accept: application/vnd.github.raw" \
+                    > "$STAGE/$name/SKILL.md" 2>/dev/null &&
+                 [ -s "$STAGE/$name/SKILL.md" ]; then
                 fetched=$((fetched + 1))
             else
                 echo "warning: could not fetch the $name skill" >&2
