@@ -9,7 +9,7 @@
 #
 # No volume and no network: distil optimises the conversation a client sends over
 # stdio. It reads no files and calls nothing out.
-ARG VERSION=0.3.1
+ARG VERSION=0.3.2
 
 FROM alpine:3.21 AS fetch
 ARG VERSION
