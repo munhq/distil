@@ -1,7 +1,8 @@
 {
   "mcpServers": {
     "distil": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/bin/distil-mcp-launch"
+      "command": "npx",
+      "args": ["-y", "@munhq/distil"]
     }
   }
 }
