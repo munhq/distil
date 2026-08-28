@@ -77,7 +77,7 @@ const payload = {
       title: 'distil',
       version: pkg.version,
       description:
-        'Structural code intelligence over MCP: symbols, callers, imports and blast radius across 40+ languages.',
+        "Context optimization for LLM agents: measure where a session's tokens actually go, and compress context only where compression pays for the prompt cache it invalidates.",
       websiteUrl: 'https://github.com/munhq/distil',
     },
     tools,

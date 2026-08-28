@@ -1,1 +1,22 @@
+# Rust build artifacts
 /target
+
+# Generated code index. It records the absolute workspace path of whoever ran
+# it, so it is a machine snapshot rather than a source file.
+.codeindex.json
+
+# Per-machine Claude Code settings
+.claude/settings.local.json
+
+# distil-bench outputs. `--export-sessions` writes real transcripts and
+# `--json` writes a baseline of one machine's traffic; neither belongs in git.
+/sessions/
+/baseline.json
+*.jsonl
+card.json
+/dist/
+
+# Editors
+.idea/
+.vscode/
+*.swp
