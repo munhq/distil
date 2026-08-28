@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="distil">
+  <title>distil</title>
+  <defs>
+    <linearGradient id="ds" x1="64" y1="448" x2="448" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7c3aed"/><stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#ds)"/>
+  <!-- A funnel with one drop leaving it: a lot goes in, the fraction worth
+       keeping comes out. That is the argument of the tool, and it is the one
+       shape that still reads at 32px.
+       Drawn as strokes, never as <text>. This file is consumed by a README, a
+       favicon, an npm page, the Smithery listing and Docker's catalogue — five
+       renderers with five font stacks. Strokes look identical in all of them.
+       Violet-to-pink where codeindex is indigo-to-cyan: same construction and
+       the same square, so the two read as one family without being confused
+       for each other in a directory listing. -->
+  <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+    <!-- The stream arriving, narrowing as it falls. Two strokes, not more: a
+         third becomes texture at favicon size. -->
+    <g stroke-width="26" opacity="0.85">
+      <path d="M170 96h172"/>
+      <path d="M196 148h120"/>
+    </g>
+    <!-- The funnel, as a closed outline rather than a filled shape, so it
+         carries the same weight as the strokes above and below. -->
+    <path stroke-width="30" d="M138 196h236l-90 134v42h-56v-42z"/>
+    <!-- The drop, with 26px of clear air under the spout. The first version put
+         it at 438 and the two merged into one smudge at 32px, which is the
+         whole reason this file is checked by eye and not only by a validator. -->
+    <path stroke-width="26" d="M256 398c16 20 26 30 26 42a26 26 0 0 1-52 0c0-12 10-22 26-42z"/>
+  </g>
+</svg>

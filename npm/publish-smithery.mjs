@@ -137,9 +137,10 @@ const listingRecord = {
     .replace(/^git\+/, '')
     .replace(/\.git$/, ''),
   license: pkg.license,
-  // distil has no mark of its own, and an icon that resolves beats a blank
-  // tile. Same one codeindex's listing carries.
-  iconUrl: 'https://www.google.com/s2/favicons?domain=github.com&sz=64',
+  // The project's own mark, served from the default branch. A directory tile
+  // is the first thing anyone sees, and a generic GitHub favicon says nothing
+  // about which of the servers on that page this one is.
+  iconUrl: 'https://raw.githubusercontent.com/munhq/distil/main/docs/brand/icon-512.png',
 };
 
 const createListing = async () => {
