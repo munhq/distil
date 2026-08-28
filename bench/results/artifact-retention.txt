@@ -19,3 +19,7 @@ sessions with perfect artifact retention: 9/12
   worst case 4/10 kept; dropped e.g. ['~/.gitconfig', '~/.gitconfig-<identity>', '~/.gitconfig-local']
   worst case 5/7 kept; dropped e.g. ['~/.config/systemd/user/<unit>.service', '~/code/<project>/<unit>.service']
   worst case 8/9 kept; dropped e.g. ['~/.config/systemd/user/<unit>.service']
+
+Absolute paths in the three lines above are redacted to `~` and to placeholders.
+The corpus is one developer's machine, so the paths themselves are personal and
+carry no information the counts do not. The counts are the measurement.

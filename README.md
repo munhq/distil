@@ -211,6 +211,21 @@ Claude's tokenizer within a few percent. The break-even model assumes a single
 cache breakpoint, so a rewrite confined to the tail costs less than the table
 shows — that refines it, it does not reverse it.
 
+## Contributing
+
+Build and test instructions, the rules a benchmark change has to follow, and what
+a pull request needs before review: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Report a vulnerability privately — [`SECURITY.md`](SECURITY.md).
+
 ## License
 
-MIT OR Apache-2.0.
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution you intentionally submit
+for inclusion in this work, as defined in the Apache-2.0 license, shall be dual
+licensed as above, without any additional terms or conditions.

@@ -16,7 +16,9 @@ comparable work. Something like:
 Start from a clean tree at a known commit, and run the two windows one after the
 other, not at once — concurrent runs contend for CPU and distort the timings.
 
-Window A, codeindex available:
+Window A, codeindex available. The config launches `codeindex` from `PATH`, so
+install it first (`npx -y @munhq/codeindex`, or `install.sh` from that repo) or
+edit the `command` field to point at your own build:
 
     claude --strict-mcp-config --mcp-config bench/ab/with-codeindex.json
 

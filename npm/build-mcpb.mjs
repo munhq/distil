@@ -64,14 +64,15 @@ try {
     name: 'distil',
     display_name: 'distil',
     version: pkg.version,
-    description: 'Structural code intelligence over MCP: symbols, callers, imports and blast radius across 40+ languages.',
+    description:
+      "Context optimization for LLM agents: measure where a session's tokens actually go, and compress context only where compression pays for the prompt cache it invalidates.",
     long_description:
-      "Answers 'where is X defined', 'show me this function', 'what calls it' and 'what breaks if I change this file' in tens of tokens instead of the ~1,563 a file read costs. tree-sitter, 16 tools, one statically linked binary, no account or key.",
+      'Counts the tokens in a conversation by segment — tool results, tool calls, user text, assistant text and thinking — and prices a history rewrite against the prompt cache it invalidates, so compaction fires only at the boundary where it pays. Registry, masking, budgeting and compaction layers, one statically linked binary, no account or key.',
     author: { name: 'munhq', url: 'https://github.com/munhq' },
     homepage: 'https://github.com/munhq/distil',
     repository: { type: 'git', url: 'https://github.com/munhq/distil' },
-    license: 'MIT',
-    keywords: ['mcp', 'code-intelligence', 'tree-sitter', 'context-window'],
+    license: 'MIT OR Apache-2.0',
+    keywords: ['mcp', 'context-window', 'token-optimization', 'prompt-cache', 'compaction'],
     server: {
       type: 'node',
       entry_point: 'server/distil-mcp.js',
