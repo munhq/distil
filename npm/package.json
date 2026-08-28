@@ -1,6 +1,6 @@
 {
   "name": "@munhq/distil",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "mcpName": "io.github.munhq/distil",
   "description": "Context optimization middleware for LLM agents — a dynamic tool registry, result masking, token budgeting and smart compaction, so a long session stays inside its window instead of failing for length.",
   "keywords": [
