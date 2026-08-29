@@ -17,7 +17,7 @@ prompt caching, not compression quality.
 
 A cached prefix is billed at 0.1x. Editing history invalidates that prefix from
 the edit onwards, so every token after the edit is re-billed as a cache write at
-1.25x or 2.0x. Measured across 13,694 real sessions: cache writes were 2.1% of
+1.25x or 2.0x. Measured 2026-08-29 across 13,814 real sessions: cache writes were 2.0% of
 input tokens and **28.0% of input cost**.
 
 So a rewrite has to shrink what it invalidates below this to break even on price
