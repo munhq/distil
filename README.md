@@ -42,27 +42,29 @@ is what this crate is for: measuring the numbers you need in order to choose
 
 ## The result that shapes the rest
 
-Measured over 13,681 local Claude Code transcripts — 366,008 assistant turns,
-195M tokens of unique text:
+Measured 2026-08-29 over 13,814 local Claude Code transcripts — 410,742
+assistant turns, 212.7M tokens of unique text. Reproduce it on your own corpus
+with `distil-bench ~/.claude/projects`; a corpus grows, so the date matters
+more than the decimals.
 
 | | tokens | share |
 |---|---|---|
-| tool results | 117,460,908 | 60.1% |
-| tool calls | 32,391,631 | 16.6% |
-| user text | 29,363,474 | 15.0% |
-| assistant text | 14,187,961 | 7.3% |
-| thinking | 2,076,716 | 1.1% |
+| tool results | 127,371,430 | 59.9% |
+| tool calls | 38,065,121 | 17.9% |
+| user text | 29,818,536 | 14.0% |
+| assistant text | 15,402,077 | 7.2% |
+| thinking | 2,076,716 | 1.0% |
 
-Those 195M unique tokens were billed as **100.6 billion input tokens** — every
-token paid for 515 times, because a request resends the whole history.
+Those 212.7M unique tokens were billed as **116.9 billion input tokens** — every
+token paid for 550 times, because a request resends the whole history.
 
 Price that at real cache multipliers (read 0.1x, write 1.25x for the 5-minute
 TTL and 2.0x for the 1-hour):
 
 | | share of tokens | share of **cost** |
 |---|---|---|
-| cache read | 97.8% | 71.1% |
-| cache writes | **2.1%** | **28.1%** |
+| cache read | 97.9% | 71.8% |
+| cache writes | **2.0%** | **27.6%** |
 
 **Cache writes are 2% of the tokens and 28% of the bill.** Editing history
 invalidates the cached prefix from the edit onwards, converting reads at 0.1x

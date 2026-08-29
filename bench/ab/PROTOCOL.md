@@ -1,6 +1,6 @@
 # A/B protocol: does codeindex reduce tokens on the same task?
 
-The corpus split cannot answer this. Only 28 sessions in 13,694 ever called a
+The corpus split cannot answer this. Only 32 sessions in 13,814 ever called a
 codeindex tool, all of them long, so session length produces the entire apparent
 effect. Holding the task fixed and moving only the tool set is the way out.
 

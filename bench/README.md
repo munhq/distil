@@ -114,7 +114,7 @@ Every source says to calibrate against your own workload; none ships a way to
 do it, and none reports what the values turn out to be. Those are:
 
 - the amplification factor (515x here) that turns unique text into billed input
-- the split of cost between cache reads and cache writes (71.1% / 28.1% here)
+- the split of cost between cache reads and cache writes (71.8% / 27.6% here)
 - the distribution of turns per session, which sets how much room a rewrite has
   to amortise (p50 = 3, p90 = 69 here)
 - where each tool's output actually goes (Read = 61.8% of tool-result tokens,

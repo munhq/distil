@@ -12,23 +12,23 @@ compression — but the point of the project is knowing when not to.
 
 ## The finding
 
-Measured over 13,681 local Claude Code transcripts, 366,008 assistant turns,
-195M tokens of unique text:
+Measured 2026-08-29 over 13,814 local Claude Code transcripts, 410,742
+assistant turns, 212.7M tokens of unique text:
 
-    tool results    117,460,908    60.1%
-    tool calls       32,391,631    16.6%
-    user text        29,363,474    15.0%
-    assistant text   14,187,961     7.3%
-    thinking          2,076,716     1.1%
+    tool results    127,371,430    59.9%
+    tool calls       38,065,121    17.9%
+    user text        29,818,536    14.0%
+    assistant text   15,402,077     7.2%
+    thinking          2,076,716     1.0%
 
-Those 195M unique tokens were billed as 100.6 billion input tokens: every token
-paid for 515 times, because a request resends the whole history.
+Those 212.7M unique tokens were billed as 116.9 billion input tokens: every
+token paid for 550 times, because a request resends the whole history.
 
 Priced at real cache multipliers (read 0.1x, write 1.25x for the 5-minute TTL,
 2.0x for the 1-hour):
 
-    cache reads     97.8% of tokens    71.1% of cost
-    cache writes     2.1% of tokens    28.1% of cost
+    cache reads     97.9% of tokens    71.8% of cost
+    cache writes     2.0% of tokens    27.6% of cost
 
 Cache writes are 2% of the tokens and 28% of the bill. Editing history
 invalidates the cached prefix from the edit onwards, converting reads at 0.1x

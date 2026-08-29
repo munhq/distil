@@ -1,23 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="distil — measure what context compression actually costs">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="distil — you cannot compress your way out of context cost">
   <title>distil</title>
   <defs>
-    <linearGradient id="tile" x1="80" y1="248" x2="248" y2="80" gradientUnits="userSpaceOnUse">
+    <linearGradient id="tile" x1="80" y1="212" x2="212" y2="80" gradientUnits="userSpaceOnUse">
       <stop stop-color="#7c3aed"/><stop offset="1" stop-color="#ec4899"/>
-    </linearGradient>
-    <linearGradient id="rule" x1="80" y1="0" x2="720" y2="0" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7c3aed"/><stop offset="1" stop-color="#ec4899" stop-opacity="0"/>
     </linearGradient>
   </defs>
 
-  <!-- GitHub renders these cards on both light and dark chrome, so the card
-       carries its own dark ground rather than inheriting one. -->
+  <!-- GitHub renders these on both light and dark chrome, so the card carries
+       its own ground rather than inheriting one. -->
   <rect width="1280" height="640" fill="#0b1020"/>
 
-  <!-- The mark, from icon.svg by transform — same reason the wordmark does it:
-       re-drawing is how three copies of a logo stop being the same logo.
-       168/512 = 0.328125 -->
-  <rect x="80" y="80" width="168" height="168" rx="46" fill="url(#tile)"/>
-  <g transform="translate(80 80) scale(0.328125)">
+  <!-- The mark, from icon.svg by transform. 132/512 = 0.2578125 -->
+  <rect x="80" y="80" width="132" height="132" rx="36" fill="url(#tile)"/>
+  <g transform="translate(80 80) scale(0.2578125)">
     <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
       <g stroke-width="26" opacity="0.85">
         <path d="M170 96h172"/>
@@ -29,20 +24,13 @@
   </g>
 
   <g font-family="'Hanken Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif">
-    <text x="288" y="152" font-size="86" font-weight="700" letter-spacing="-3" fill="#f6f8ff">distil</text>
-    <text x="288" y="212" font-size="34" font-weight="500" fill="#9aa4c4">Context optimization for LLM agents</text>
+    <text x="240" y="168" font-size="68" font-weight="700" letter-spacing="-2" fill="#f6f8ff">distil</text>
 
-    <rect x="80" y="316" width="640" height="3" fill="url(#rule)"/>
-
-    <!-- The finding that makes the project worth reading, stated as the measured
-         number rather than an adjective. Everyone publishes a savings figure;
-         this is the denominator nobody publishes. -->
-    <text x="80" y="392" font-size="40" font-weight="600" fill="#f6f8ff">Measure what compression actually costs</text>
-    <text x="80" y="446" font-size="30" font-weight="400" fill="#9aa4c4">Where the tokens go · what a rewrite invalidates · whether it pays</text>
-
-    <g font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace">
-      <text x="80" y="530" font-size="30" fill="#9aa4c4"><tspan fill="#ec4899">cache writes</tspan> 2.1% of tokens <tspan fill="#5b6b8d">·</tspan> 28.1% of the bill</text>
-      <text x="80" y="578" font-size="26" fill="#5b6b8d">npx -y @munhq/distil · 13,681 real sessions · MIT OR Apache-2.0</text>
-    </g>
+    <!-- One sentence, and it is the finding rather than a pitch. A link preview
+         is read in about a second; a stat row, an install command and a licence
+         string all compete with the only line that would make anyone click. -->
+    <text x="80" y="372" font-size="62" font-weight="600" letter-spacing="-1.5" fill="#f6f8ff">You cannot compress your way</text>
+    <text x="80" y="446" font-size="62" font-weight="600" letter-spacing="-1.5" fill="#f6f8ff">out of context cost.</text>
+    <text x="80" y="524" font-size="38" font-weight="400" fill="#9aa4c4">You can only decline to admit tokens.</text>
   </g>
 </svg>

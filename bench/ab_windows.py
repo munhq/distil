@@ -11,8 +11,8 @@ Both windows write a transcript to ~/.claude/projects. Point this at the two
 files and it reports where the tokens went in each.
 
 WHY A CONTROLLED PAIR AND NOT THE CORPUS
-The observational split in distil-bench is confounded beyond rescue: only 28
-sessions in 13,694 ever called codeindex, all of them long, and session length
+The observational split in distil-bench is confounded beyond rescue: only 32
+sessions in 13,814 ever called codeindex, all of them long, and session length
 produces the entire apparent effect. Two windows on one task removes that,
 because the task is held fixed and the tool set is the only thing that moves.
 
