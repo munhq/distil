@@ -18,7 +18,20 @@ checksums; `install.sh` and a prebuilt binary remain for anyone without Node.
 
 ---
 
-Measure what context compression actually costs, on real agent traffic.
+## Cache writes are 2% of your tokens and 28% of your bill
+
+That is not a claim, it is a measurement: 13,814 real agent sessions, 410,742
+assistant turns, re-run on 2026-08-29. Every unique token in them was billed
+**550 times**, because a request resends the whole history.
+
+Which means the obvious move — compress the history — is usually the wrong one.
+Editing history invalidates the cached prefix from the edit onwards and converts
+reads at 0.1x into writes at 1.25x or 2.0x. **You cannot compress your way out of
+context cost. You can only decline to admit tokens.**
+
+<img src="docs/figures/where-tokens-go.svg" alt="Where an agent session's tokens go: tool results 59.9%, tool calls 17.9%, user text 14.0%, assistant text 7.2%, thinking 1.0%" width="900">
+
+<img src="docs/figures/break-even.svg" alt="How much a rewrite must delete just to break even: 8% with one turn left, 46% with ten, 90% with a hundred" width="900">
 
 Every tool in this space publishes a savings percentage measured on its own
 fixtures. What none publishes is the denominator: what share of a real session
@@ -40,7 +53,7 @@ and none ships a way to do it or publishes what the values turn out to be. That
 is what this crate is for: measuring the numbers you need in order to choose
 `clear_at_least`, or to decide not to clear at all.
 
-## The result that shapes the rest
+## The full measurement
 
 Measured 2026-08-29 over 13,814 local Claude Code transcripts — 410,742
 assistant turns, 212.7M tokens of unique text. Reproduce it on your own corpus

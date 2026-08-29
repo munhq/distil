@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 334" role="img" aria-label="where an agent session's tokens go">
+  <title>where an agent session's tokens go</title>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="900" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7c3aed"/><stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+  </defs>
+  <!-- Carries its own ground: GitHub renders README images on both a white and
+       a near-black page, and a transparent figure is illegible on one of them. -->
+  <rect width="900" height="334" rx="14" fill="#0b1020"/>
+  <g font-family="'Hanken Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif">
+    <text x="34" y="52" font-size="26" font-weight="600" fill="#f6f8ff">Where an agent session&#39;s tokens go</text>
+    <text x="34" y="80" font-size="16" font-weight="400" fill="#6b7899">13,814 local transcripts, 410,742 assistant turns, 212.7M unique tokens &#183; 2026-08-29</text>
+    <text x="34" y="128" font-size="17" fill="#9aa4c4">tool results</text>
+    <rect x="200" y="112" width="560" height="22" rx="5" fill="url(#g)"/>
+    <text x="774" y="129" font-size="17" font-weight="600" fill="#f6f8ff">59.9%</text>
+    <text x="34" y="164" font-size="17" fill="#9aa4c4">tool calls</text>
+    <rect x="200" y="148" width="167" height="22" rx="5" fill="url(#g)"/>
+    <text x="381" y="165" font-size="17" font-weight="600" fill="#f6f8ff">17.9%</text>
+    <text x="34" y="200" font-size="17" fill="#9aa4c4">user text</text>
+    <rect x="200" y="184" width="131" height="22" rx="5" fill="url(#g)"/>
+    <text x="345" y="201" font-size="17" font-weight="600" fill="#f6f8ff">14.0%</text>
+    <text x="34" y="236" font-size="17" fill="#9aa4c4">assistant text</text>
+    <rect x="200" y="220" width="67" height="22" rx="5" fill="url(#g)"/>
+    <text x="281" y="237" font-size="17" font-weight="600" fill="#f6f8ff">7.2%</text>
+    <text x="34" y="272" font-size="17" fill="#9aa4c4">thinking</text>
+    <rect x="200" y="256" width="9" height="22" rx="5" fill="url(#g)"/>
+    <text x="223" y="273" font-size="17" font-weight="600" fill="#f6f8ff">1.0%</text>
+    <text x="34" y="312" font-size="15" fill="#5b6b8d">Tool output is three fifths of it. Reading files alone is 58.5% of that.</text>
+  </g>
+</svg>
