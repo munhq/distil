@@ -166,8 +166,19 @@ impl DistilServer {
         }
     }
 
+    // The three review hints are explicit on both tools. Directories that review
+    // servers (the ChatGPT app submission among them) refuse a tool whose hints
+    // are absent, even though the protocol has defaults. optimize is a pure
+    // function of its input: nothing is stored and nothing leaves the process.
     #[tool(
-        description = "Optimize conversation context for LLM token efficiency. Takes messages and tool definitions, returns optimized context with metrics. Typically saves 50-90% of tokens."
+        description = "Optimize conversation context for LLM token efficiency. Takes messages and tool definitions, returns optimized context with metrics. Typically saves 50-90% of tokens.",
+        annotations(
+            title = "Optimize context",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
     )]
     async fn optimize(
         &self,
@@ -251,8 +262,20 @@ impl DistilServer {
         )]))
     }
 
+    // tool_call is not read-only: note_write stores a note in this process's
+    // in-memory scratchpad, and writing an existing key replaces that note, which
+    // is why destructive_hint is true rather than false — the protocol defines
+    // "not destructive" as additive-only. The scratchpad lives and dies with the
+    // process and nothing outside it is changed, so open_world_hint is false.
     #[tool(
-        description = "Handle a distil-injected tool call (tool_search, note_read, note_write). When distil optimizes your tools, it injects meta-tools. Route those calls here."
+        description = "Handle a distil-injected tool call (tool_search, note_read, note_write). When distil optimizes your tools, it injects meta-tools. Route those calls here.",
+        annotations(
+            title = "Handle a distil meta-tool call",
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
     )]
     async fn tool_call(
         &self,
