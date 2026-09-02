@@ -20,3 +20,7 @@ card.json
 .idea/
 .vscode/
 *.swp
+
+# Local commit guard. Not committed: it is machine tooling, and the list it
+# reads deliberately lives outside every repository.
+.githooks/
