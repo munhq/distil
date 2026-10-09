@@ -241,4 +241,4 @@ Report a vulnerability privately — [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-MIT. See [LICENSE-MIT](LICENSE).
+MIT. See [LICENSE](LICENSE).
