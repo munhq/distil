@@ -41,7 +41,7 @@ ARG VERSION
 LABEL org.opencontainers.image.title="distil" \
       org.opencontainers.image.description="Context optimization middleware for LLM agents: dynamic tool registry, result masking, token budgeting and smart compaction." \
       org.opencontainers.image.source="https://github.com/munhq/distil" \
-      org.opencontainers.image.licenses="MIT OR Apache-2.0" \
+      org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=fetch /out/distil-mcp /distil-mcp
 # stdio: the client speaks JSON-RPC over this container's stdin and stdout, so
