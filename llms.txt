@@ -3,7 +3,7 @@
 > Context optimization for LLM agents, as an MCP server, a Rust crate and a
 > measurement harness. It answers "where do this session's tokens actually go"
 > and "does compressing this history pay for the prompt cache it invalidates",
-> measured on real agent transcripts rather than on fixtures. MIT OR Apache-2.0.
+> measured on real agent transcripts rather than on fixtures. MIT.
 
 distil counts a conversation by segment, prices a history rewrite against
 prompt-cache multipliers, and exposes the result over MCP (JSON-RPC on stdio,

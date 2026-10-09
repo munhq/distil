@@ -71,7 +71,7 @@ try {
     author: { name: 'munhq', url: 'https://github.com/munhq' },
     homepage: 'https://github.com/munhq/distil',
     repository: { type: 'git', url: 'https://github.com/munhq/distil' },
-    license: 'MIT OR Apache-2.0',
+    license: 'MIT',
     keywords: ['mcp', 'context-window', 'token-optimization', 'prompt-cache', 'compaction'],
     // The bundle is what Claude Desktop installs, and its manifest is the only
     // place that install can get an icon from. Referenced by URL rather than
