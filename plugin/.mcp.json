@@ -2,7 +2,7 @@
   "mcpServers": {
     "distil": {
       "command": "npx",
-      "args": ["-y", "@munhq/distil"]
+      "args": ["-y", "--@munhq:registry=https://registry.npmjs.org", "@munhq/distil"]
     }
   }
 }
