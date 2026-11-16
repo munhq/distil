@@ -1,0 +1,6 @@
+{
+  "name": "distil",
+  "build_sha_env": "DISTIL_BUILD_SHA",
+  "issue": "munhq/desk#244",
+  "check_filegroup": true
+}
